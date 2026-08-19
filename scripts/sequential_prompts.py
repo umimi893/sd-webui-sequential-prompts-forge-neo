@@ -101,13 +101,15 @@ class Script(scripts.Script):
         end_mode,
         apply_negative,
     ):
+        # Always reset save-routing state first. This matters if an API/client
+        # reuses a processing object and disables this extension on a later run.
+        p._seqprompt_folder_routing_enabled = False
+        p._seqprompt_output_folders = {}
+
         if not enabled:
             return
 
-        # Reset save-routing state once per generation so a reused processing
-        # object cannot inherit folders from a previous job.
         p._seqprompt_folder_routing_enabled = True
-        p._seqprompt_output_folders = {}
 
         # Do not resolve prompts here. Other always-on extensions may still
         # expand/replace p.all_prompts in their own process() callback. Actual
@@ -117,6 +119,7 @@ class Script(scripts.Script):
         p.extra_generation_params["Sequential repeat"] = max(int(repeat_each), 1)
         p.extra_generation_params["Sequential start"] = max(int(start_index), 0)
         p.extra_generation_params["Sequential end"] = end_mode
+        p.extra_generation_params["Sequential negative"] = bool(apply_negative)
 
     def before_process_batch(
         self,
