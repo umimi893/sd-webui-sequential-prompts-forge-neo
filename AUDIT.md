@@ -75,3 +75,22 @@ python -m unittest discover -s tests -v
 ## Release recommendation
 
 v0.2.0 is suitable for Forge Neo user testing. The remaining release gate is a clean-install smoke test in Forge Neo covering txt2img, img2img, Hires.fix, Batch size/count, Dynamic Prompts coexistence, and a LoRA choice.
+
+## v0.4.0 folder-marker audit
+
+The `==A|B|C==` syntax adds save-time folder routing while keeping `=A|B|C=` as a normal sequential block.
+
+Safety and compatibility checks added:
+
+- doubled markers are parsed before single-equals markers, preventing `==...==` from being partially consumed as `=...=`
+- multiple doubled markers combine deterministically as `A__D`
+- ordinary single-equals blocks never contribute to output folder names
+- output names are sanitized for Windows-invalid characters and reserved device names
+- `/`, `\\`, `..`, control characters, and other path-traversal inputs cannot create nested or parent paths
+- long generated directory names are deterministically shortened with a hash suffix
+- save routing uses the global image index (`iteration * batch_size + batch_index`), so Batch size > 1 is routed per image
+- Forge grids are excluded from choice-folder routing
+- Hires.fix first-pass intermediate saves are excluded because Forge saves them before exposing a reliable final image batch index
+- the callback creates the destination directory itself because Forge Neo creates its original output directory before `before_image_saved` runs
+
+The remaining release gate is still a real Forge Neo smoke test with final image saving enabled on Windows and Linux.
