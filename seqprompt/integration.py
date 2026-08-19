@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .core import replace_sequential_blocks, sequence_index_for_image
+from .core import resolve_sequential_blocks, sequence_index_for_image
+from .folders import remember_output_folder
 
 
 def _replace_at(
@@ -11,17 +12,17 @@ def _replace_at(
     *,
     sequence_index: int,
     end_mode: str,
-) -> str | None:
+) -> tuple[str | None, tuple[str, ...]]:
     if index < 0 or index >= len(values):
-        return None
+        return None, ()
 
-    resolved = replace_sequential_blocks(
+    resolution = resolve_sequential_blocks(
         values[index],
         sequence_index=sequence_index,
         end_mode=end_mode,
     )
-    values[index] = resolved
-    return resolved
+    values[index] = resolution.text
+    return resolution.text, resolution.folder_choices
 
 
 def apply_processing_batch(
@@ -36,10 +37,10 @@ def apply_processing_batch(
 ) -> None:
     """Resolve sequential blocks for the actual Forge Neo batch about to run.
 
-    This intentionally runs at batch time rather than process time so extensions
-    that expand or replace prompt lists (for example Dynamic Prompts) get to run
-    first. Forge Neo calls this hook before parsing Extra Networks, so selected
-    choices may also contain LoRA / extra-network tags.
+    Actual resolution happens at batch time so extensions that expand or replace
+    prompt lists (for example Dynamic Prompts) can run first. Forge Neo invokes
+    this hook before parsing Extra Networks, so selected choices may contain LoRA
+    tags. ``==...==`` selections are also recorded here for save-time routing.
     """
     batch_size = max(int(getattr(p, "batch_size", 1)), 1)
     batch_number = max(int(batch_number), 0)
@@ -59,7 +60,7 @@ def apply_processing_batch(
                 repeat_each=repeat_each,
                 start_index=start_index,
             )
-            resolved = _replace_at(
+            resolved, folder_choices = _replace_at(
                 all_prompts,
                 global_index,
                 sequence_index=sequence_index,
@@ -67,6 +68,7 @@ def apply_processing_batch(
             )
             if resolved is not None:
                 batch_prompts[local_index] = resolved
+                remember_output_folder(p, global_index, folder_choices)
 
     if apply_negative:
         batch_negative_prompts = getattr(p, "negative_prompts", None)
@@ -81,7 +83,7 @@ def apply_processing_batch(
                     repeat_each=repeat_each,
                     start_index=start_index,
                 )
-                resolved = _replace_at(
+                resolved, _ = _replace_at(
                     all_negative_prompts,
                     global_index,
                     sequence_index=sequence_index,
