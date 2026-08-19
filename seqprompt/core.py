@@ -1,25 +1,37 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 
-_BLOCK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
+
+@dataclass(frozen=True)
+class PromptResolution:
+    text: str
+    folder_choices: tuple[str, ...] = ()
 
 
 def split_choices(body: str) -> list[str]:
-    r"""Split ``A|B|C`` while supporting ``\|`` and ``\\`` escapes."""
+    r"""Split ``A|B|C`` while supporting ``\|``, ``\\`` and ``\=`` escapes.
+
+    A backslash only escapes ``|``, ``=`` or another backslash. Before any other
+    character it is preserved literally so prompt text such as Windows paths
+    is not silently modified.
+    """
     choices: list[str] = []
     buffer: list[str] = []
-    escaped = False
+    index = 0
 
-    for char in body:
-        if escaped:
-            buffer.append(char)
-            escaped = False
-            continue
+    while index < len(body):
+        char = body[index]
 
         if char == "\\":
-            escaped = True
+            if index + 1 < len(body) and body[index + 1] in {"|", "=", "\\"}:
+                buffer.append(body[index + 1])
+                index += 2
+                continue
+
+            buffer.append("\\")
+            index += 1
             continue
 
         if char == "|":
@@ -28,11 +40,148 @@ def split_choices(body: str) -> list[str]:
         else:
             buffer.append(char)
 
-    if escaped:
-        buffer.append("\\")
+        index += 1
 
     choices.append("".join(buffer).strip())
     return choices
+
+
+def _is_escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    return backslashes % 2 == 1
+
+
+def _can_start_equals_block(text: str, index: int) -> bool:
+    """Avoid treating ordinary ``key=value`` text as a sequential block.
+
+    The equals syntax is intended to be a standalone prompt token. At the start
+    of a prompt it is always allowed; elsewhere the opening delimiter must not
+    be attached directly to a word/number/underscore. This still supports common
+    forms such as ``foo,=A|B=,bar`` and ``foo (=A|B=)``.
+    """
+    if index <= 0:
+        return True
+
+    previous = text[index - 1]
+    return not (previous.isalnum() or previous == "_")
+
+
+def _find_closing_double_equals(text: str, start: int) -> int:
+    cursor = start
+    while cursor < len(text) - 1:
+        if text.startswith("==", cursor) and not _is_escaped(text, cursor):
+            return cursor
+        cursor += 1
+    return -1
+
+
+def _find_closing_single_equals(text: str, start: int) -> int:
+    cursor = start
+    while cursor < len(text):
+        if text[cursor] != "=" or _is_escaped(text, cursor):
+            cursor += 1
+            continue
+
+        # A doubled equals belongs to the explicit folder-marker syntax and is
+        # never used as the closing delimiter for a normal =A|B= block.
+        if (cursor + 1 < len(text) and text[cursor + 1] == "=") or (
+            cursor > 0 and text[cursor - 1] == "="
+        ):
+            cursor += 1
+            continue
+
+        return cursor
+    return -1
+
+
+def _select_choice(body: str, sequence_index: int, end_mode: str) -> str | None:
+    choices = split_choices(body)
+    if len(choices) < 2:
+        return None
+
+    if end_mode == "clamp":
+        choice_index = min(max(sequence_index, 0), len(choices) - 1)
+    else:
+        choice_index = sequence_index % len(choices)
+
+    return choices[choice_index]
+
+
+def resolve_sequential_blocks(
+    text: str,
+    sequence_index: int,
+    end_mode: str = "loop",
+) -> PromptResolution:
+    """Resolve sequential prompt blocks and return folder-marker selections.
+
+    Primary syntax:
+        ``=A | B | C=`` resolves in sequence.
+
+    Folder-marker syntax:
+        ``==A | B | C==`` resolves in sequence and records the selected value
+        for output-folder routing.
+
+    Legacy compatibility syntax:
+        ``[[A|B|C]]`` resolves in sequence but never controls folders.
+    """
+    if not text or "|" not in text:
+        return PromptResolution(text)
+
+    output: list[str] = []
+    folder_choices: list[str] = []
+    index = 0
+
+    while index < len(text):
+        if (
+            text.startswith("==", index)
+            and not _is_escaped(text, index)
+            and _can_start_equals_block(text, index)
+        ):
+            end = _find_closing_double_equals(text, index + 2)
+            if end >= 0:
+                body = text[index + 2 : end]
+                selected = _select_choice(body, sequence_index, end_mode)
+                if selected is not None:
+                    output.append(selected)
+                    folder_choices.append(selected)
+                    index = end + 2
+                    continue
+
+        if text.startswith("[[", index):
+            end = text.find("]]", index + 2)
+            if end >= 0:
+                body = text[index + 2 : end]
+                selected = _select_choice(body, sequence_index, end_mode)
+                if selected is not None:
+                    output.append(selected)
+                    index = end + 2
+                    continue
+
+        if (
+            text[index] == "="
+            and not _is_escaped(text, index)
+            and _can_start_equals_block(text, index)
+        ):
+            is_double = index + 1 < len(text) and text[index + 1] == "="
+            follows_double = index > 0 and text[index - 1] == "="
+            if not is_double and not follows_double:
+                end = _find_closing_single_equals(text, index + 1)
+                if end >= 0:
+                    body = text[index + 1 : end]
+                    selected = _select_choice(body, sequence_index, end_mode)
+                    if selected is not None:
+                        output.append(selected)
+                        index = end + 1
+                        continue
+
+        output.append(text[index])
+        index += 1
+
+    return PromptResolution("".join(output), tuple(folder_choices))
 
 
 def replace_sequential_blocks(
@@ -40,23 +189,8 @@ def replace_sequential_blocks(
     sequence_index: int,
     end_mode: str = "loop",
 ) -> str:
-    """Resolve every ``[[A|B|C]]`` block at one deterministic sequence index."""
-    if not text or "[[" not in text:
-        return text
-
-    def replace(match: re.Match[str]) -> str:
-        choices = split_choices(match.group(1))
-        if not choices:
-            return match.group(0)
-
-        if end_mode == "clamp":
-            choice_index = min(max(sequence_index, 0), len(choices) - 1)
-        else:
-            choice_index = sequence_index % len(choices)
-
-        return choices[choice_index]
-
-    return _BLOCK_RE.sub(replace, text)
+    """Resolve sequential blocks and return only the resulting prompt text."""
+    return resolve_sequential_blocks(text, sequence_index, end_mode).text
 
 
 def sequence_index_for_image(
