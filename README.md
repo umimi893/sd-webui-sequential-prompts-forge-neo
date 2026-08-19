@@ -108,8 +108,11 @@ sd-webui-forge-neo/extensions/sd-webui-sequential-prompts-forge-neo/
 ## Compatibility
 
 - Designed for **Stable Diffusion WebUI Forge Neo**.
-- Tested with Python 3.13 at the pure-Python core level.
-- Uses Forge Neo/A1111-compatible `scripts.Script` and `process()` APIs.
+- Audited against Forge Neo `neo` commit `e782dc3` (2026-08-16).
+- Tested with Python 3.13.
+- Uses Forge Neo's `process()` plus `before_process_batch()` lifecycle so final prompt expansion happens before Extra Networks parsing.
+- Hires.fix positive and negative prompt arrays are resolved with the same sequence index as the first pass.
+- Compatible by design with Dynamic Prompts: `{...}` expansion can finish first, then `[[...]]` is resolved at batch time.
 - No third-party Python packages are required.
 
 ## Development
@@ -117,6 +120,7 @@ sd-webui-forge-neo/extensions/sd-webui-sequential-prompts-forge-neo/
 Run tests:
 
 ```bash
+python -m compileall -q seqprompt scripts tests
 python -m unittest discover -s tests -v
 ```
 
@@ -124,4 +128,7 @@ python -m unittest discover -s tests -v
 
 - Nested `[[...]]` blocks are intentionally unsupported.
 - Sequential wildcard files are not implemented yet.
-- Full UI + image-generation integration tests require an actual Forge Neo installation.
+- Full GPU-backed UI + image-generation integration still requires an actual Forge Neo installation.
+- Literal `[[...]]` text cannot currently be escaped as a whole block.
+
+See [`AUDIT.md`](AUDIT.md) for the compatibility review and residual risks.
