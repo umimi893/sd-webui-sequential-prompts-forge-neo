@@ -2,60 +2,86 @@
 
 Audit date: 2026-08-19
 
+Extension version reviewed: **v0.4.1**
+
 Target: Stable Diffusion WebUI Forge Neo, `Haoming02/sd-webui-forge-classic`, branch `neo`.
-Upstream commit inspected: `e782dc3fe07deb4653a8a1a1ad8ffa52783f54c5`.
+
+Upstream commit inspected: `e782dc3fe07deb4653a8a1a1ad8ffa52783f54c5` (verified as the current `neo` head on 2026-08-19).
 
 ## Scope
 
-The review traced the extension against Forge Neo's actual script and generation lifecycle, including:
+The review traced the extension against Forge Neo's script, prompt, Hires.fix, and image-save lifecycle, including:
 
 - `StableDiffusionProcessing.setup_prompts()`
 - `ScriptRunner.process()`
 - `ScriptRunner.before_process_batch()`
-- per-batch slicing of positive and negative prompts
-- Extra Networks parsing
-- Hires.fix prompt arrays and second-pass conditioning
+- per-batch positive/negative prompt slicing
+- Extra Networks parsing and activation
+- Hires.fix positive/negative prompt arrays
+- `iteration`, `batch_index`, and global image indexing
+- `images.save_image()` and `before_image_saved`
 - infotext/main-prompt synchronization
 - interaction with Dynamic Prompts-style prompt-list expansion
 - Python 3.13 compatibility
 
-## Findings fixed in v0.2.0
+## Important issues fixed during the audit
 
-### High: Hires.fix used unresolved sequential syntax
+### High — Hires.fix used unresolved sequential syntax
 
-Forge Neo maintains separate `all_hr_prompts` and `all_hr_negative_prompts` arrays. v0.1.0 only transformed `all_prompts` and `all_negative_prompts`, so a first pass could use `A` while the Hires.fix pass still received raw `[[A|B|C]]` text.
+Early versions transformed only `all_prompts` and `all_negative_prompts`. Forge Neo maintains independent `all_hr_prompts` and `all_hr_negative_prompts`, so Hires.fix could receive the raw sequential template.
 
-Fix: resolve Hires.fix arrays at the same global image index immediately before each batch is parsed.
+**Fix:** Hires.fix arrays are resolved with the same global image index immediately before each batch is parsed.
 
-### High: prompt expansion was order-sensitive with other extensions
+### High — prompt expansion was order-sensitive with other extensions
 
-v0.1.0 resolved the entire prompt list in `process()`. If another always-on extension replaced or expanded `p.all_prompts` after that callback, sequential selection could be lost. In particular, an extension that generated prompt variants after Sequential Prompts could receive an already-collapsed `A` template and replicate only that choice.
+Resolving the full prompt list inside `process()` could collapse a sequential template before another always-on extension expanded or replaced prompts.
 
-Fix: defer actual `[[...]]` resolution to `before_process_batch()`. Forge Neo invokes this after all `process()` callbacks and before Extra Networks parsing. The selected choice can therefore contain LoRA/extra-network tags and can safely operate on prompt lists produced by Dynamic Prompts.
+**Fix:** actual resolution happens in `before_process_batch()`, after all `process()` callbacks and before Forge Neo parses Extra Networks.
 
-### Medium: unrelated backslashes were silently removed
+### Medium — unrelated backslashes could be removed
 
-The parser documented support for `\|` and `\\`, but v0.1.0 treated backslash as a generic escape character. Text such as `C:\models\foo` could lose backslashes.
+The first parser treated backslash as a generic escape even though only specific delimiters were intended.
 
-Fix: backslash now escapes only `|` or another backslash; otherwise it remains literal.
+**Fix:** only `\|`, `\=`, and `\\` are escapes; unrelated backslashes remain literal.
 
-## Verification
+### Medium — `=...=` could false-positive on ordinary `key=value` text
 
-Automated tests cover:
+Because `=` is intentionally lightweight syntax, text containing two ordinary equals signs with a pipe between them could previously resemble a sequence, for example `artist=foo|bar, weight=1`.
 
-- per-image sequencing
-- per-batch sequencing
-- repeat counts
-- loop and clamp behavior
-- multiple blocks and differing block lengths
-- escaped pipes and backslashes
-- preservation of unrelated/trailing backslashes
-- positive and negative batch-list synchronization
-- Hires.fix positive and negative arrays
-- disabled negative processing
-- prompt lists already expanded by another extension
-- LoRA tags inside choices before Extra Networks parsing
-- script callback contract with a minimal Forge-style stub
+**Fix in v0.4.1:** an equals-based sequential block may start at the beginning of a prompt or after a non-word boundary, but not when the opening equals is attached directly to a letter, digit, or underscore.
+
+### Medium — stale save-routing state on reused processing objects
+
+Folder-routing state was reset only after confirming the extension was enabled. An API/client that reused a processing object could theoretically carry routing state into a later disabled run.
+
+**Fix in v0.4.1:** routing state is always cleared before the enabled check.
+
+### Low — grid heuristic could skip normal files containing `grid`
+
+When grid and sample roots are the same, a broad filename heuristic could mistake a normal filename such as `my-grid-style.png` for a Forge grid.
+
+**Fix in v0.4.1:** same-root fallback detection now only recognizes the normal Forge `grid`, `grid-...`, or `grid_...` basename forms.
+
+## Folder-marker audit
+
+`==A|B|C==` adds save-time folder routing while `=A|B|C=` remains a normal sequence.
+
+Verified properties:
+
+- doubled markers are parsed before single-equals markers;
+- single-equals blocks never contribute folder names;
+- multiple doubled markers combine deterministically as `A__D`;
+- folder routing uses the global image index (`iteration * batch_size + batch_index`);
+- Batch size > 1 routes each image independently;
+- Windows-invalid characters and reserved device names are sanitized;
+- `/`, `\\`, `..`, control characters, and path traversal cannot create parent/nested paths;
+- long folder names are deterministically shortened;
+- a containment guard is checked again before directory creation;
+- grids are excluded from normal choice-folder routing;
+- Hires.fix first-pass intermediates are excluded because Forge saves them while `is_hr_pass` is true;
+- the callback creates the destination directory itself because Forge creates only the original path before `before_image_saved` runs.
+
+## Automated verification
 
 Run:
 
@@ -64,33 +90,49 @@ python -m compileall -q seqprompt scripts tests
 python -m unittest discover -s tests -v
 ```
 
+Current result: **54 tests passed**.
+
+Coverage includes:
+
+- Per image / Per batch sequencing
+- Batch size and Batch count behavior
+- repeat counts, start index, Loop, Clamp
+- normal `=...=`, folder `==...==`, and legacy `[[...]]`
+- multiple blocks and different choice counts
+- escaped pipes, equals signs, and backslashes
+- ordinary `key=value` false-positive protection
+- positive/negative batch synchronization
+- Hires.fix positive/negative arrays
+- negative-processing toggle
+- Dynamic Prompts-style pre-expansion
+- LoRA / Extra Network choices
+- per-image folder mapping across batches
+- Windows-invalid/reserved/path-traversal folder inputs
+- long folder names
+- grid and Hires intermediate exclusions
+- stale routing state reset
+- Forge-style script callback registration/contract
+
 ## Residual risks / not yet proven
 
-1. A real GPU-backed Forge Neo launch has not yet been executed in CI, so Gradio rendering and end-to-end image generation remain the final integration check.
-2. Nested `[[...]]` blocks are intentionally unsupported.
-3. There is no whole-block escape syntax for literal `[[...]]` text yet.
-4. Another third-party extension could theoretically modify prompts *after* this extension's `before_process_batch()` callback. Forge Neo allows user callback prioritization, so no extension can make ordering completely impossible to override.
-5. The repository currently has no license file. Before broad public distribution, choose and add an explicit license.
+1. A real GPU-backed Forge Neo launch has not been executed by this test suite, so end-to-end Gradio rendering and actual image generation/saving remain the final integration check.
+2. Windows and Linux save routing are covered by filesystem-level unit tests, not by a real Forge Neo process on both operating systems.
+3. Nested sequential blocks are intentionally unsupported.
+4. Sequential wildcard files are not implemented.
+5. Another third-party extension can theoretically rewrite prompts after this extension's `before_process_batch()` callback if callback priority is manually changed.
+6. Unusual distinct raw choices can sanitize to the same folder component, causing those outputs to share a folder.
+7. The repository currently has no explicit license file.
 
 ## Release recommendation
 
-v0.2.0 is suitable for Forge Neo user testing. The remaining release gate is a clean-install smoke test in Forge Neo covering txt2img, img2img, Hires.fix, Batch size/count, Dynamic Prompts coexistence, and a LoRA choice.
+v0.4.1 is suitable for normal Forge Neo user testing and substantially safer than the initial implementation. Before calling it fully release-validated, run a clean-install smoke test covering:
 
-## v0.4.0 folder-marker audit
-
-The `==A|B|C==` syntax adds save-time folder routing while keeping `=A|B|C=` as a normal sequential block.
-
-Safety and compatibility checks added:
-
-- doubled markers are parsed before single-equals markers, preventing `==...==` from being partially consumed as `=...=`
-- multiple doubled markers combine deterministically as `A__D`
-- ordinary single-equals blocks never contribute to output folder names
-- output names are sanitized for Windows-invalid characters and reserved device names
-- `/`, `\\`, `..`, control characters, and other path-traversal inputs cannot create nested or parent paths
-- long generated directory names are deterministically shortened with a hash suffix
-- save routing uses the global image index (`iteration * batch_size + batch_index`), so Batch size > 1 is routed per image
-- Forge grids are excluded from choice-folder routing
-- Hires.fix first-pass intermediate saves are excluded because Forge saves them before exposing a reliable final image batch index
-- the callback creates the destination directory itself because Forge Neo creates its original output directory before `before_image_saved` runs
-
-The remaining release gate is still a real Forge Neo smoke test with final image saving enabled on Windows and Linux.
+- txt2img with Batch size 1 and 3;
+- img2img;
+- Hires.fix;
+- `=A|B|C=` and `==A|B|C==`;
+- `==A|B|C==, =D|E|F=` folder routing;
+- multiple `==...==` markers;
+- Dynamic Prompts coexistence;
+- a LoRA choice;
+- actual image saving on Windows.
