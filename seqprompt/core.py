@@ -55,6 +55,21 @@ def _is_escaped(text: str, index: int) -> bool:
     return backslashes % 2 == 1
 
 
+def _can_start_equals_block(text: str, index: int) -> bool:
+    """Avoid treating ordinary ``key=value`` text as a sequential block.
+
+    The equals syntax is intended to be a standalone prompt token. At the start
+    of a prompt it is always allowed; elsewhere the opening delimiter must not
+    be attached directly to a word/number/underscore. This still supports common
+    forms such as ``foo,=A|B=,bar`` and ``foo (=A|B=)``.
+    """
+    if index <= 0:
+        return True
+
+    previous = text[index - 1]
+    return not (previous.isalnum() or previous == "_")
+
+
 def _find_closing_double_equals(text: str, start: int) -> int:
     cursor = start
     while cursor < len(text) - 1:
@@ -121,7 +136,11 @@ def resolve_sequential_blocks(
     index = 0
 
     while index < len(text):
-        if text.startswith("==", index) and not _is_escaped(text, index):
+        if (
+            text.startswith("==", index)
+            and not _is_escaped(text, index)
+            and _can_start_equals_block(text, index)
+        ):
             end = _find_closing_double_equals(text, index + 2)
             if end >= 0:
                 body = text[index + 2 : end]
@@ -142,7 +161,11 @@ def resolve_sequential_blocks(
                     index = end + 2
                     continue
 
-        if text[index] == "=" and not _is_escaped(text, index):
+        if (
+            text[index] == "="
+            and not _is_escaped(text, index)
+            and _can_start_equals_block(text, index)
+        ):
             is_double = index + 1 < len(text) and text[index + 1] == "="
             follows_double = index > 0 and text[index - 1] == "="
             if not is_double and not follows_double:
