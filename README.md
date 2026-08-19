@@ -1,285 +1,235 @@
-# Sequential Prompts for Stable Diffusion WebUI Forge Neo
+# Sequential Prompts for Forge Neo
 
 ![tests](https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo/actions/workflows/tests.yml/badge.svg)
 
-Deterministic prompt sequencing for **Stable Diffusion WebUI Forge Neo**, with optional per-choice output-folder sorting.
+An always-on extension for **Stable Diffusion WebUI Forge Neo** that resolves inline prompt choices in a deterministic order instead of randomly.
 
-Current development version: **v0.4.1**
+Current release: **v0.5.0**.
 
-Audited against Forge Neo `neo` commit `e782dc3fe07deb4653a8a1a1ad8ffa52783f54c5` (current upstream head when this README was updated).
+## Syntax
 
-## What it does
-
-Instead of choosing prompt alternatives randomly, this extension walks through them in a predictable order.
+Use a single dollar pair for normal sequential choices:
 
 ```text
-=A | B | C=
+$front | side | back$
 ```
 
-With **Per image** mode:
+Use a double dollar pair when the selected choice should also determine the output folder:
 
 ```text
-A → B → C → A → ...
+$$front | side | back$$
 ```
 
-With Batch size = 3, one batch can therefore generate A, B, and C in one pass.
+The old `=...=`, `==...==`, `[[...]]`, `&...&`, and `&&...&&` forms are **not syntax** in v0.5.0 and remain literal prompt text.
 
-It can also sort saved images into folders based on the selected choice:
+### Example
 
 ```text
-==front | side | back==
+1girl, $$front | side | back$$, $day | sunset | night$
 ```
 
-which can produce:
+With **Per image** and Batch size 3:
 
 ```text
-front/
-side/
-back/
+image 1: 1girl, front, day     -> front/
+image 2: 1girl, side, sunset   -> side/
+image 3: 1girl, back, night    -> back/
 ```
 
-## Syntax reference
-
-| Syntax | Meaning |
-|---|---|
-| `=A | B | C=` | Ordered sequential choice |
-| `==A | B | C==` | Ordered choice + use the selected value for output-folder routing |
-| `[[A|B|C]]` | Legacy compatibility syntax; ordered choice only |
-
-The `=...=` and `==...==` forms are intended to be standalone prompt tokens, for example after a comma or whitespace. This avoids accidentally interpreting ordinary text such as `artist=foo|bar, weight=1` as a sequence.
-
-### Basic example
+Multiple folder markers combine with `__`:
 
 ```text
-1girl, =front view | side view | back view=, white background
+$$A|B|C$$, $$D|E|F$$
 ```
 
-Batch size = 3, Batch count = 1, **Per image**:
+produces folders such as:
 
 ```text
-image 1 → front view
-image 2 → side view
-image 3 → back view
+A__D/
+B__E/
+C__F/
 ```
 
-### Folder-routing example
-
-```text
-1girl, ==front view | side view | back view==, white background
-```
-
-The same three images are saved under:
-
-```text
-front view/
-side view/
-back view/
-```
-
-### Folder marker + normal marker
-
-```text
-==A | B | C==, =D | E | F=
-```
-
-Per image:
-
-```text
-A, D → A/
-B, E → B/
-C, F → C/
-```
-
-Only the doubled `==...==` block contributes to the folder name.
-
-### Multiple folder markers
-
-```text
-==A | B | C==, ==D | E | F==
-```
-
-becomes:
-
-```text
-A, D → A__D/
-B, E → B__E/
-C, F → C__F/
-```
-
-All doubled blocks use the same global sequence index and their selected values are joined with `__`.
-
-## Sequence controls
+## Sequence modes
 
 ### Per image
 
-The sequence advances once per generated image, including images inside the same batch.
-
-`=A|B|C=` with Batch size = 3:
+The sequence advances once for every image Forge is about to generate.
 
 ```text
-batch 1 → A, B, C
-batch 2 → A, B, C
+$A|B|C$
 ```
 
-With `Repeat each choice = 3`:
+Batch size 1, Batch count 3:
 
 ```text
-A, A, A, B, B, B, C, C, C, ...
+A -> B -> C
+```
+
+Batch size 3, Batch count 1:
+
+```text
+A, B, C
+```
+
+Batch size 2:
+
+```text
+batch 1: A, B
+batch 2: C, A
 ```
 
 ### Per batch
 
-The sequence advances once per batch.
-
-`=A|B|C=` with Batch size = 3 and Batch count = 3:
+Every image in a Forge batch uses the same choice:
 
 ```text
-batch 1 → A, A, A
-batch 2 → B, B, B
-batch 3 → C, C, C
+batch 1: A, A, A
+batch 2: B, B, B
+batch 3: C, C, C
 ```
 
-With `Repeat each choice = 2`, each value is held for two full batches.
+### Repeat, start, and end behavior
 
-### Start index
+The UI also provides:
 
-`Start index = 0` starts from the first choice. `1` starts from the second, and so on.
+- **Repeat each choice** — e.g. Per image + repeat 3 gives `AAA BBB CCC`.
+- **Start index** — start from a later choice.
+- **Loop** — wrap after the final choice.
+- **Clamp** — stay on the final choice after reaching it.
+- **Also process negative prompt** — use the same sequence identity for negative prompts.
 
-### End behavior
+## Escapes and prompt-language coexistence
 
-- **Loop**: `A → B → C → A → ...`
-- **Clamp**: `A → B → C → C → ...`
-
-Different blocks may contain different numbers of choices; each block applies Loop/Clamp independently while sharing the same global sequence index.
-
-## Escaping
-
-Inside a sequential block:
+Inside a Sequential block:
 
 ```text
-\|  → literal |
-\=  → literal =
-\\  → literal \
+\|   literal pipe
+\$   literal dollar
+\\   literal backslash
 ```
 
-Example:
+Unrelated backslashes are preserved, including Windows-style paths.
+
+The parser deliberately avoids stealing syntax owned by Forge or Dynamic Prompts:
+
+- Forge Extra Network tags such as `<lora:name:1>` are treated atomically.
+- Forge bracket syntax such as `[red|blue]` does not become a Sequential separator.
+- Forge grouping/emphasis can still contain a Sequential block, e.g. `($A|B$)`.
+- Dynamic Prompts' default `{...}` grammar is left opaque until Dynamic Prompts expands it.
+
+Nested Sequential blocks are intentionally unsupported and fail closed as literal text rather than being partially transformed.
+
+Empty choices are supported:
 
 ```text
-=A\|B | C\=D | E\\F=
-```
-
-represents the three choices:
-
-```text
-A|B
-C=D
-E\F
+$with hat||without hat$
 ```
 
 ## LoRA / Extra Networks
 
-Sequential resolution runs before Forge Neo parses Extra Networks, so LoRA tags can be choices:
+Choices may contain Forge Extra Network tags:
 
 ```text
-=<lora:character_a:1> | <lora:character_b:1>=
+$<lora:a:1> | <lora:b:1>$
 ```
 
-Folder markers may also contain Extra Network syntax:
+However, current Forge Neo applies Extra Network configuration **per batch**, not independently per image. Therefore this extension rejects a Sequential configuration that would create different active LoRA/Extra Network settings inside the same batch.
 
-```text
-==<lora:character_a:1> | <lora:character_b:1>==
-```
+Safe examples include:
 
-When used as a folder name, invalid filesystem characters are sanitized automatically.
+- Batch size 1.
+- Per batch mode where every image in the current batch resolves to the same Extra Network setup.
 
-## Output-folder behavior
+Existing heterogeneous Extra Network prompts that are unrelated to Sequential Prompts are not newly policed by this extension.
 
-Folder routing is based only on doubled blocks in the **main positive prompt**.
+## Hires.fix
 
-The extension:
+When Hires.fix is enabled, the corresponding Hires prompt arrays use the same frozen image identity and sequence position as the normal prompt.
 
-- routes each final image using its global image index;
-- supports Batch size greater than 1;
-- creates the destination folder before Forge saves the image;
-- sanitizes Windows-invalid characters and control characters;
-- blocks path traversal such as `..`, `/`, and `\` from creating parent/nested paths;
-- protects Windows reserved names such as `CON`, `NUL`, `COM1`, and `LPT1`;
-- shortens excessively long folder names deterministically;
-- leaves grids in Forge Neo's normal grid location;
-- leaves Hires.fix first-pass intermediate saves in Forge Neo's normal location.
+Folder routing is controlled only by the **main positive prompt**. `$$...$$` in negative or Hires-only prompt text does not create a folder.
 
-If Forge Neo's own **save images to subdirectory** option is enabled, the choice folder is created inside the directory Forge already selected.
+If **Save images before highres fix** is enabled, those intermediate first-pass images stay in Forge's normal output location. Only final core samples and their directly-associated auxiliary saves are routed.
 
-Auxiliary saves for an image, such as masks or pre-color-correction copies, follow the same choice folder when Forge exposes the same image index.
+## Dynamic Prompts
 
-## Negative prompts and Hires.fix
+The extension resolves batches after all `process()` callbacks, so Dynamic Prompts can expand prompts first.
 
-- Positive prompts are always processed when the extension is enabled.
-- Negative prompt processing can be enabled/disabled in the extension panel.
-- Hires.fix positive and negative prompt arrays use the same sequence index as the corresponding image.
-- A custom Hires.fix prompt can contain sequential syntax as well.
-- Folder names are intentionally derived from the main positive prompt, not from negative or Hires-only prompt blocks.
+The default Dynamic Prompts delimiters coexist with `$...$`.
 
-## Dynamic Prompts compatibility
+If Dynamic Prompts is explicitly configured to use `$` or `$$` as one of its own delimiters while a relevant raw Sequential template is present, generation is stopped with a clear conflict instead of letting callback order decide the result.
 
-This extension deliberately uses `=...=` / `==...==`, not Dynamic Prompts' `{...}` syntax.
+## Output folders
 
-Actual sequential resolution happens in Forge Neo's `before_process_batch()` stage, after other extensions have had their `process()` callbacks. This allows Dynamic Prompts-style expansion to happen first and then lets Sequential Prompts resolve the final batch templates.
+`$$...$$` folders are sanitized for portable filesystem use:
 
-As with any A1111/Forge extension, users can manually alter callback priority; an extension that intentionally rewrites prompts after this extension can still change the final result.
+- Windows-invalid filename characters are replaced.
+- Windows reserved device names are handled.
+- Unicode is normalized.
+- dangerous control/bidi characters are removed or replaced.
+- long UTF-8 names are deterministically shortened.
+- lossy sanitization receives a short deterministic hash so different raw choices do not silently collapse into the same directory across runs.
+- path containment is checked before and after directory creation.
 
-## Install
+Forge's existing **save-to-dirs** behavior is preserved: the Sequential choice folder is nested under the subdirectory Forge already selected.
 
-From the Forge Neo directory:
+### Save numbering
+
+Forge computes its numeric filename before `before_image_saved`. Moving that file into a new choice folder without recalculating the sequence can cause repeated `00000` names and possible overwrites.
+
+v0.5.0 recomputes the numeric prefix inside the actual destination folder while preserving Forge's own final **Override / Number Suffix** collision policy.
+
+## Post-processing identity
+
+Forge allows `postprocess_batch_list` extensions to reorder, remove, or add images if they also update prompt/seed metadata. Folder routing follows that live metadata identity instead of trusting the original slot number.
+
+If the identity is genuinely ambiguous — for example two original images have identical prompt/negative/seed/subseed metadata but different folder outcomes — routing is skipped rather than guessing.
+
+An extension that secretly swaps only pixel data while leaving all Forge metadata unchanged cannot be detected by a save callback; this remains a documented limitation.
+
+## Forge scripts and special modes
+
+Sequence state begins again for each independent `process_images()` invocation. This matters for scripts such as X/Y/Z Plot, Prompts from File, Loopback, and img2img Batch, which create sub-runs or reuse the processing object.
+
+Two Forge selectable scripts are intentionally treated specially when Sequential syntax is relevant:
+
+- **Prompt Matrix**: its raw parser splits the selected prompt on `|` before the normal Forge processing lifecycle, which conflicts structurally with `$A|B$`.
+- **SD Upscale**: it recursively generates tiles and saves the final composite outside the normal core sample-save identity.
+
+These combinations fail closed instead of producing misleading sequences/folders.
+
+Multi-frame **Wan/video** jobs are also rejected when Sequential syntax is active because Forge's batch axis represents video frames rather than independent image identities. Single-frame Wan remains allowed.
+
+## Installation
+
+From the Forge Neo root directory:
 
 ```bash
-git clone https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo extensions/sd-webui-sequential-prompts-forge-neo
+git clone https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo.git extensions/sd-webui-sequential-prompts-forge-neo
 ```
 
-Restart Forge Neo after installation.
+Then restart Forge Neo and expand the **Sequential Prompts** accordion in txt2img or img2img.
 
-### Update
+To update an existing clone from the Forge Neo root directory:
 
 ```bash
 cd extensions/sd-webui-sequential-prompts-forge-neo
 git pull
 ```
 
-Restart Forge Neo after updating.
+## Validation status
 
-## Compatibility and audit status
+v0.5.0 has been rebuilt from audited components covering:
 
-Target: [`Haoming02/sd-webui-forge-classic`](https://github.com/Haoming02/sd-webui-forge-classic), branch `neo`.
+- `$` / `$$` parser behavior and malformed input.
+- Forge batch/index lifecycle and partial API prompt-list batches.
+- LoRA / Extra Networks and Hires.fix.
+- Dynamic Prompts ordering and delimiter conflicts.
+- save routing, numbering, grids, auxiliary images, postprocess reorder, path safety, and Unicode.
+- abort/reuse state and Wan/video policy.
 
-The extension has been checked against Forge Neo's current prompt lifecycle, including:
+The development audit exercised **304 detailed local unit/contract checks**, preserved in the Git-invisible audit snapshot. The committed release CI suite is intentionally smaller and contains **68 focused contract tests** covering the release-critical behavior without duplicating every audit edge case. GitHub Actions passes on Ubuntu and Windows with Python 3.13.
 
-- prompt setup and batch slicing;
-- `process()` / `before_process_batch()` ordering;
-- Extra Networks parsing;
-- Hires.fix prompt arrays;
-- per-image `batch_index` / `iteration` handling;
-- `before_image_saved` save-path callback behavior.
+A real Forge Neo GPU/UI/disk smoke test on Windows has **not yet been recorded**. This is a known validation limitation rather than an automated-test failure; unit tests deliberately do not claim to replace that runtime check.
 
-Automated coverage currently includes **54 tests** for sequencing, folder markers, escaping, false-positive `key=value` protection, Hires.fix arrays, Dynamic Prompts-style pre-expansion, LoRA choices, negative prompts, output routing, path safety, grids, and the Forge-style script callback contract.
-
-Run locally:
-
-```bash
-python -m compileall -q seqprompt scripts tests
-python -m unittest discover -s tests -v
-```
-
-See [`AUDIT.md`](AUDIT.md) for the compatibility review and residual risks.
-
-## Known limitations
-
-- A full GPU-backed Forge Neo UI/image-generation smoke test is still recommended before treating the extension as fully release-validated.
-- Nested sequential blocks are intentionally unsupported.
-- Sequential wildcard files are not implemented.
-- The legacy `[[...]]` syntax is supported for compatibility but does not route folders.
-- Sanitization can cause two unusual raw choice strings to map to the same folder name; avoid relying on filesystem-invalid characters to distinguish categories.
-- The repository does not yet include an explicit license file.
-
-## Version history
-
-See [`CHANGELOG.md`](CHANGELOG.md).
+See [`AUDIT.md`](AUDIT.md) for the detailed compatibility and risk record.

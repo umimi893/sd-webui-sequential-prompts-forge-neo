@@ -1,210 +1,134 @@
+from __future__ import annotations
+
 import unittest
 from types import SimpleNamespace
 
-from seqprompt.integration import apply_processing_batch
+from seqprompt.batch_integration import BatchIntegrationError, SequenceConfig
+from seqprompt.integration import prepare_after_init, preparse_is_clean, resolve_current_batch
+
+KNOWN = {"lora": "lora", "lyco": "lora"}
 
 
-class IntegrationTests(unittest.TestCase):
-    def make_processing(self, batch_size=3):
-        return SimpleNamespace(
-            batch_size=batch_size,
-            prompts=["=A|B|C="] * batch_size,
-            negative_prompts=["=nA|nB|nC="] * batch_size,
-            all_prompts=["=A|B|C="] * 9,
-            all_negative_prompts=["=nA|nB|nC="] * 9,
-            all_hr_prompts=["=hA|hB|hC="] * 9,
-            all_hr_negative_prompts=["=hnA|hnB|hnC="] * 9,
-            main_prompt="=A|B|C=",
-            main_negative_prompt="=nA|nB|nC=",
-            _seqprompt_output_folders={},
-        )
+def make_p(*, total=3, batch_size=3, prompt="$A|B|C$", negative="neg", enable_hr=False, hr=None, hr_neg=None):
+    all_prompts = [prompt] * total
+    all_negatives = [negative] * total
+    return SimpleNamespace(
+        batch_size=batch_size,
+        all_prompts=all_prompts,
+        all_negative_prompts=all_negatives,
+        all_seeds=list(range(10, 10 + total)),
+        all_subseeds=list(range(20, 20 + total)),
+        prompts=[],
+        negative_prompts=[],
+        seeds=[],
+        subseeds=[],
+        enable_hr=enable_hr,
+        all_hr_prompts=list(hr if hr is not None else ([prompt] * total)) if enable_hr else None,
+        all_hr_negative_prompts=list(hr_neg if hr_neg is not None else ([negative] * total)) if enable_hr else None,
+        disable_extra_networks=False,
+        main_prompt=all_prompts[0],
+        main_negative_prompt=all_negatives[0],
+    )
 
-    def apply(self, p, batch_number, *, mode="batch", apply_negative=True):
-        p.prompts = p.all_prompts[
-            batch_number * p.batch_size : (batch_number + 1) * p.batch_size
-        ]
-        p.negative_prompts = p.all_negative_prompts[
-            batch_number * p.batch_size : (batch_number + 1) * p.batch_size
-        ]
-        apply_processing_batch(
-            p,
-            batch_number=batch_number,
-            advance_mode=mode,
-            repeat_each=1,
-            start_index=0,
-            end_mode="loop",
-            apply_negative=apply_negative,
-        )
 
-    def test_per_batch_updates_current_and_global_prompt_lists(self):
-        p = self.make_processing()
-        self.apply(p, 0)
-        self.apply(p, 1)
-        self.apply(p, 2)
+def slice_batch(p, n):
+    s = n * p.batch_size
+    e = (n + 1) * p.batch_size
+    p.iteration = n
+    p.prompts = p.all_prompts[s:e]
+    p.negative_prompts = p.all_negative_prompts[s:e]
+    p.seeds = p.all_seeds[s:e]
+    p.subseeds = p.all_subseeds[s:e]
 
-        self.assertEqual(p.all_prompts, ["A"] * 3 + ["B"] * 3 + ["C"] * 3)
-        self.assertEqual(
-            p.all_negative_prompts,
-            ["nA"] * 3 + ["nB"] * 3 + ["nC"] * 3,
-        )
-        self.assertEqual(p.main_prompt, "A")
-        self.assertEqual(p.main_negative_prompt, "nA")
 
-    def test_hires_prompts_follow_same_sequence(self):
-        p = self.make_processing()
-        self.apply(p, 0)
-        self.apply(p, 1)
-        self.apply(p, 2)
+class ContractFlowTests(unittest.TestCase):
+    def prepare(self, p, config=None):
+        return prepare_after_init(p, config=config or SequenceConfig(), known_networks=KNOWN)
 
-        self.assertEqual(
-            p.all_hr_prompts,
-            ["hA"] * 3 + ["hB"] * 3 + ["hC"] * 3,
-        )
-        self.assertEqual(
-            p.all_hr_negative_prompts,
-            ["hnA"] * 3 + ["hnB"] * 3 + ["hnC"] * 3,
-        )
+    def resolve(self, p, run, n, config=None):
+        slice_batch(p, n)
+        return resolve_current_batch(p, batch_number=n, run=run, known_networks=KNOWN)
 
-    def test_negative_toggle_leaves_both_negative_arrays_untouched(self):
-        p = self.make_processing()
-        self.apply(p, 0, apply_negative=False)
+    def clean(self, p, run, n, config=None):
+        return preparse_is_clean(p, batch_number=n, run=run)
 
-        self.assertEqual(p.all_negative_prompts[:3], ["=nA|nB|nC="] * 3)
-        self.assertEqual(
-            p.all_hr_negative_prompts[:3],
-            ["=hnA|hnB|hnC="] * 3,
-        )
+    def test_enabled_but_no_syntax_is_behavioral_noop_and_does_not_freeze(self):
+        p = make_p(prompt="plain")
+        run = self.prepare(p)
+        self.assertIsNone(run)
+        self.assertFalse(hasattr(p, "_seqprompt_frozen_layout"))
 
-    def test_per_image_uses_global_image_index(self):
-        p = self.make_processing()
-        self.apply(p, 0, mode="image")
-        self.assertEqual(p.all_prompts[:3], ["A", "B", "C"])
+    def test_normal_three_image_batch_runs_end_to_end(self):
+        p = make_p(total=3, batch_size=3)
+        run = self.prepare(p)
+        self.assertIsNotNone(run)
+        result = self.resolve(p, run, 0)
+        self.assertEqual(p.prompts, ["A", "B", "C"])
+        self.assertEqual(p.all_prompts, ["A", "B", "C"])
+        self.assertEqual(result.matched_blocks, 3)
+        self.assertTrue(self.clean(p, run, 0))
 
-    def test_folder_marker_maps_each_image_in_batch(self):
-        p = self.make_processing()
-        p.all_prompts = ["==A|B|C==, =D|E|F="] * 3
-        p.all_negative_prompts = [""] * 3
-        p.all_hr_prompts = list(p.all_prompts)
-        p.all_hr_negative_prompts = [""] * 3
-        p.prompts = list(p.all_prompts)
-        p.negative_prompts = [""] * 3
+    def test_partial_second_batch_stays_in_same_frozen_identity_domain(self):
+        p = make_p(total=5, batch_size=3)
+        run = self.prepare(p)
+        self.resolve(p, run, 0)
+        self.resolve(p, run, 1)
+        self.assertEqual(p.prompts, ["A", "B"])
+        self.assertTrue(self.clean(p, run, 1))
 
-        apply_processing_batch(
-            p,
-            batch_number=0,
-            advance_mode="image",
-            repeat_each=1,
-            start_index=0,
-            end_mode="loop",
-            apply_negative=True,
-        )
+    def test_hr_only_sequence_can_use_readonly_plain_positive_identity_array(self):
+        p = make_p(total=1, batch_size=1, prompt="plain", enable_hr=True, hr=["$H1|H2$"], hr_neg=["plain"])
+        p.all_prompts = tuple(p.all_prompts)
+        run = self.prepare(p)
+        self.assertIsNotNone(run)
+        self.resolve(p, run, 0)
+        self.assertEqual(p.all_hr_prompts, ["H1"])
+        self.assertEqual(p.all_prompts, ("plain",))
+        self.assertTrue(self.clean(p, run, 0))
 
-        self.assertEqual(p.all_prompts, ["A, D", "B, E", "C, F"])
-        self.assertEqual(p._seqprompt_output_folders, {0: "A", 1: "B", 2: "C"})
+    def test_active_positive_readonly_source_is_rejected_by_activation_not_lifecycle(self):
+        p = make_p(total=1, batch_size=1)
+        p.all_prompts = tuple(p.all_prompts)
+        with self.assertRaisesRegex(BatchIntegrationError, "read-only: all_prompts"):
+            self.prepare(p)
+        self.assertFalse(hasattr(p, "_seqprompt_frozen_layout"))
 
-    def test_multiple_folder_markers_combine_names(self):
-        p = self.make_processing()
-        p.all_prompts = ["==A|B|C==, ==D|E|F=="] * 3
-        p.all_negative_prompts = [""] * 3
-        p.all_hr_prompts = list(p.all_prompts)
-        p.all_hr_negative_prompts = [""] * 3
-        p.prompts = list(p.all_prompts)
-        p.negative_prompts = [""] * 3
+    def test_unsafe_per_image_lora_is_rejected_during_post_init_preflight(self):
+        p = make_p(total=2, batch_size=2, prompt="$<lora:a:1>|<lora:b:1>$")
+        with self.assertRaisesRegex(BatchIntegrationError, "prompt batch 1"):
+            self.prepare(p)
 
-        apply_processing_batch(
-            p,
-            batch_number=0,
-            advance_mode="image",
-            repeat_each=1,
-            start_index=0,
-            end_mode="loop",
-            apply_negative=True,
-        )
+    def test_per_batch_lora_is_allowed_and_resolved_consistently(self):
+        config = SequenceConfig(advance_mode="batch")
+        p = make_p(total=3, batch_size=3, prompt="$$<lora:a:1>|<lora:b:1>$$")
+        run = self.prepare(p, config)
+        result = self.resolve(p, run, 0, config)
+        self.assertEqual(p.prompts, ["<lora:a:1>"] * 3)
+        self.assertEqual(len(result.folder_choices), 3)
+        self.assertTrue(self.clean(p, run, 0, config))
 
-        self.assertEqual(
-            p._seqprompt_output_folders,
-            {0: "A__D", 1: "B__E", 2: "C__F"},
-        )
+    def test_future_hr_sequence_does_not_trip_current_preparse_sentinel(self):
+        p = make_p(total=2, batch_size=1, prompt="plain", enable_hr=True, hr=["$H1|H2$", "$H1|H2$"], hr_neg=["plain", "plain"])
+        run = self.prepare(p)
+        self.resolve(p, run, 0)
+        self.assertEqual(p.all_hr_prompts[1], "$H1|H2$")
+        self.assertTrue(self.clean(p, run, 0))
 
-    def test_normal_marker_never_creates_folder_mapping(self):
-        p = self.make_processing()
-        self.apply(p, 0, mode="image")
-        self.assertEqual(p._seqprompt_output_folders, {})
+    def test_late_callback_reintroducing_sequence_is_fail_closed_by_sentinel(self):
+        p = make_p(total=1, batch_size=1)
+        run = self.prepare(p)
+        self.resolve(p, run, 0)
+        p.prompts[0] = "$late1|late2$"
+        self.assertFalse(self.clean(p, run, 0))
 
-    def test_dynamic_prompt_style_expansion_can_happen_before_batch_hook(self):
-        p = self.make_processing()
-        p.all_prompts = [
-            "photo, =red|blue|green= dress, sunny",
-            "photo, =red|blue|green= dress, rainy",
-            "photo, =red|blue|green= dress, snow",
-        ]
-        p.all_negative_prompts = [""] * 3
-        p.all_hr_prompts = list(p.all_prompts)
-        p.all_hr_negative_prompts = [""] * 3
-        p.prompts = list(p.all_prompts)
-        p.negative_prompts = [""] * 3
-
-        apply_processing_batch(
-            p,
-            batch_number=0,
-            advance_mode="image",
-            repeat_each=1,
-            start_index=0,
-            end_mode="loop",
-            apply_negative=True,
-        )
-
-        self.assertEqual(
-            p.all_prompts,
-            [
-                "photo, red dress, sunny",
-                "photo, blue dress, rainy",
-                "photo, green dress, snow",
-            ],
-        )
-
-    def test_lora_choice_is_resolved_before_forge_extra_network_parser(self):
-        p = self.make_processing(batch_size=1)
-        p.all_prompts = ["1girl, =<lora:a:1>|<lora:b:1>="]
-        p.all_negative_prompts = [""]
-        p.all_hr_prompts = list(p.all_prompts)
-        p.all_hr_negative_prompts = [""]
-        p.prompts = list(p.all_prompts)
-        p.negative_prompts = [""]
-
-        apply_processing_batch(
-            p,
-            batch_number=0,
-            advance_mode="image",
-            repeat_each=1,
-            start_index=1,
-            end_mode="loop",
-            apply_negative=True,
-        )
-
-        self.assertEqual(p.prompts[0], "1girl, <lora:b:1>")
-        self.assertEqual(p.all_hr_prompts[0], "1girl, <lora:b:1>")
-
-    def test_legacy_bracket_syntax_still_works_integration(self):
-        p = self.make_processing(batch_size=1)
-        p.all_prompts = ["1girl, [[red|blue]] hair"]
-        p.all_negative_prompts = [""]
-        p.all_hr_prompts = list(p.all_prompts)
-        p.all_hr_negative_prompts = [""]
-        p.prompts = list(p.all_prompts)
-        p.negative_prompts = [""]
-
-        apply_processing_batch(
-            p,
-            batch_number=0,
-            advance_mode="image",
-            repeat_each=1,
-            start_index=1,
-            end_mode="loop",
-            apply_negative=True,
-        )
-
-        self.assertEqual(p.prompts[0], "1girl, blue hair")
+    def test_negative_toggle_off_keeps_negative_literal_through_full_flow(self):
+        config = SequenceConfig(apply_negative=False)
+        p = make_p(total=1, batch_size=1, prompt="$A|B$", negative="$N1|N2$")
+        run = self.prepare(p, config)
+        self.resolve(p, run, 0, config)
+        self.assertEqual(p.prompts, ["A"])
+        self.assertEqual(p.negative_prompts, ["$N1|N2$"])
+        self.assertTrue(self.clean(p, run, 0, config))
 
 
 if __name__ == "__main__":
