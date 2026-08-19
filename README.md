@@ -330,11 +330,12 @@ The v0.4.2 candidate has been traced against the current Forge Neo prompt and sa
 - final and auxiliary saves;
 - UI manual saves;
 - callback reload/idempotency;
+- end-to-end save-context contract through a Forge-shaped `save_image()` frame;
 - Windows filename rules;
 - Linux/`statvfs` path behavior;
 - reused processing-state cleanup.
 
-Current local automated coverage: **94 tests** on Python 3.13.
+Current local automated coverage: **97 tests** on Python 3.13.
 
 The GitHub Actions matrix runs the same compile/tests on:
 
@@ -358,7 +359,7 @@ See [`AUDIT.md`](AUDIT.md) for the detailed audit and remaining release gates.
 - Concurrent direct callers that bypass Forge's normal queued generation path can race a destination-folder numeric scan. Normal Gradio GPU jobs are serialized by Forge.
 - Distinct raw values may sanitize/case-fold to the same folder and therefore share its numbering sequence.
 - img2img Batch restarts the sequence for each input file rather than continuing one global counter across the directory.
-- Video/Wan-specific batching is not explicitly release-tested; Wan can alter effective sampling batch behavior.
+- Video/Wan-specific batching is not explicitly release-tested; encoded video output is not routed by the image-save callback.
 - Nested sequential blocks are intentionally unsupported.
 - Sequential wildcard files are not implemented.
 - The repository does not yet include an explicit license file.

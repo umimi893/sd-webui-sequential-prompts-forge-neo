@@ -125,7 +125,7 @@ python -m unittest discover -s tests -v
 git diff --check
 ```
 
-Result: **94 tests passed**; compile and whitespace checks passed.
+Result: **97 tests passed**; compile and whitespace checks passed.
 
 Coverage includes:
 
@@ -144,6 +144,7 @@ Coverage includes:
 - Unicode character/byte limits;
 - traversal/symlink-aware containment;
 - exact Forge save-context extraction using real Python frames;
+- end-to-end save-context contract calls through a fake Forge `modules/images.py:save_image()` frame;
 - exact/fallback grid detection, including shared and nested output roots;
 - destination-folder numbering, basename handling, forced filenames, numeric-seed false positives;
 - long Forge parent-path budgeting;
@@ -159,7 +160,7 @@ The GitHub Actions matrix is configured for Python 3.13 on both Ubuntu and Windo
 2. **Late third-party image reordering is not fully trackable.** An extension may add/remove/reorder tensors in `postprocess_batch_list`. Forge requires it to update prompts/seeds, but Forge exposes no stable custom per-image identity that this extension can use to follow arbitrary reordering, especially when LoRA-only choices collapse to the same parsed prompt text.
 3. **Callback priority remains user-configurable.** An extension intentionally rewriting prompts after this extension's `before_process_batch` can change the final result; a later `before_image_saved` callback can also move/rename the path after this extension.
 4. **img2img Batch restarts per input file.** Directory-wide continuation is not implemented.
-5. **Video/Wan batching is not release-tested.** Wan can change effective sampling batch behavior relative to configured `p.batch_size`.
+5. **Video/Wan batching is not release-tested.** Wan can change effective sampling batch behavior relative to configured `p.batch_size`; encoded video output is not routed by the image-save callback.
 6. **Concurrent direct callers outside Forge's normal queue can race destination numbering.** Normal Gradio GPU jobs are serialized by Forge's queue lock.
 7. Distinct raw choices can sanitize/case-fold/join to the same directory and intentionally share its numbering sequence.
 8. Extremely long **pre-existing** output paths can still fail in Forge/OS code even when this extension elects not to add a folder.

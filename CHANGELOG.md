@@ -14,10 +14,11 @@
 - Made repeated `before_process_batch()` invocation non-destructive to an already-recorded folder mapping.
 - Clear stale Sequential Prompts state/metadata on reused processing objects and clear private routing state again after generation saves complete.
 - Made the global save callback safe against source/hot reload duplication and repeated invocation of the same save params.
+- Added an end-to-end save-context contract test that calls routing through a fake Forge `modules/images.py:save_image()` frame.
 - Added direct coverage that LoRA folder markers route correctly while negative/Hires-only doubled markers never control the output folder.
 - Documented deterministic img2img Batch behavior: the sequence restarts for each input file.
 - Expanded CI to Python 3.13 on Ubuntu and Windows.
-- Expanded automated coverage to **94 tests**.
+- Expanded automated coverage to **97 tests**.
 
 ## v0.4.1
 
