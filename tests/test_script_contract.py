@@ -71,6 +71,29 @@ class ScriptContractTests(unittest.TestCase):
         self.assertTrue(p._seqprompt_folder_routing_enabled)
         self.assertEqual(p._seqprompt_output_folders, {})
 
+    def test_disabled_process_clears_stale_folder_routing_state(self):
+        module, _, _ = self.load_script_module()
+        script = module.Script()
+        p = SimpleNamespace(
+            _seqprompt_folder_routing_enabled=True,
+            _seqprompt_output_folders={0: "stale"},
+            extra_generation_params={},
+        )
+
+        script.process(p, False, "image", 1, 0, "loop", True)
+
+        self.assertFalse(p._seqprompt_folder_routing_enabled)
+        self.assertEqual(p._seqprompt_output_folders, {})
+
+    def test_process_records_negative_toggle_in_metadata(self):
+        module, _, _ = self.load_script_module()
+        script = module.Script()
+        p = SimpleNamespace(extra_generation_params={})
+
+        script.process(p, True, "image", 1, 0, "loop", False)
+
+        self.assertFalse(p.extra_generation_params["Sequential negative"])
+
     def test_before_process_batch_resolves_actual_batch_and_folders(self):
         module, _, _ = self.load_script_module()
         script = module.Script()
