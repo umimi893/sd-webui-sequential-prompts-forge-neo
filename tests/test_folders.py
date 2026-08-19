@@ -105,6 +105,25 @@ class FolderTests(unittest.TestCase):
 
             self.assertEqual(Path(params.filename), original)
 
+    def test_sample_filename_containing_grid_word_is_still_routed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            p = SimpleNamespace(
+                _seqprompt_folder_routing_enabled=True,
+                _seqprompt_output_folders={0: 'A'},
+                batch_size=1,
+                iteration=0,
+                batch_index=0,
+                is_hr_pass=False,
+                outpath_samples=str(root),
+                outpath_grids=str(root),
+            )
+            params = SimpleNamespace(p=p, filename=str(root / '00001-my-grid-style.png'))
+
+            route_image_save(params)
+
+            self.assertEqual(Path(params.filename).parent.name, 'A')
+
     def test_route_image_save_skips_grid_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
