@@ -8,14 +8,15 @@ class IntegrationTests(unittest.TestCase):
     def make_processing(self, batch_size=3):
         return SimpleNamespace(
             batch_size=batch_size,
-            prompts=["[[A|B|C]]"] * batch_size,
-            negative_prompts=["[[nA|nB|nC]]"] * batch_size,
-            all_prompts=["[[A|B|C]]"] * 9,
-            all_negative_prompts=["[[nA|nB|nC]]"] * 9,
-            all_hr_prompts=["[[hA|hB|hC]]"] * 9,
-            all_hr_negative_prompts=["[[hnA|hnB|hnC]]"] * 9,
-            main_prompt="[[A|B|C]]",
-            main_negative_prompt="[[nA|nB|nC]]",
+            prompts=["=A|B|C="] * batch_size,
+            negative_prompts=["=nA|nB|nC="] * batch_size,
+            all_prompts=["=A|B|C="] * 9,
+            all_negative_prompts=["=nA|nB|nC="] * 9,
+            all_hr_prompts=["=hA|hB|hC="] * 9,
+            all_hr_negative_prompts=["=hnA|hnB|hnC="] * 9,
+            main_prompt="=A|B|C=",
+            main_negative_prompt="=nA|nB|nC=",
+            _seqprompt_output_folders={},
         )
 
     def apply(self, p, batch_number, *, mode="batch", apply_negative=True):
@@ -68,10 +69,10 @@ class IntegrationTests(unittest.TestCase):
         p = self.make_processing()
         self.apply(p, 0, apply_negative=False)
 
-        self.assertEqual(p.all_negative_prompts[:3], ["[[nA|nB|nC]]"] * 3)
+        self.assertEqual(p.all_negative_prompts[:3], ["=nA|nB|nC="] * 3)
         self.assertEqual(
             p.all_hr_negative_prompts[:3],
-            ["[[hnA|hnB|hnC]]"] * 3,
+            ["=hnA|hnB|hnC="] * 3,
         )
 
     def test_per_image_uses_global_image_index(self):
@@ -79,12 +80,63 @@ class IntegrationTests(unittest.TestCase):
         self.apply(p, 0, mode="image")
         self.assertEqual(p.all_prompts[:3], ["A", "B", "C"])
 
+    def test_folder_marker_maps_each_image_in_batch(self):
+        p = self.make_processing()
+        p.all_prompts = ["==A|B|C==, =D|E|F="] * 3
+        p.all_negative_prompts = [""] * 3
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = [""] * 3
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = [""] * 3
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=0,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(p.all_prompts, ["A, D", "B, E", "C, F"])
+        self.assertEqual(p._seqprompt_output_folders, {0: "A", 1: "B", 2: "C"})
+
+    def test_multiple_folder_markers_combine_names(self):
+        p = self.make_processing()
+        p.all_prompts = ["==A|B|C==, ==D|E|F=="] * 3
+        p.all_negative_prompts = [""] * 3
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = [""] * 3
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = [""] * 3
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=0,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(
+            p._seqprompt_output_folders,
+            {0: "A__D", 1: "B__E", 2: "C__F"},
+        )
+
+    def test_normal_marker_never_creates_folder_mapping(self):
+        p = self.make_processing()
+        self.apply(p, 0, mode="image")
+        self.assertEqual(p._seqprompt_output_folders, {})
+
     def test_dynamic_prompt_style_expansion_can_happen_before_batch_hook(self):
         p = self.make_processing()
         p.all_prompts = [
-            "photo, [[red|blue|green]] dress, sunny",
-            "photo, [[red|blue|green]] dress, rainy",
-            "photo, [[red|blue|green]] dress, snow",
+            "photo, =red|blue|green= dress, sunny",
+            "photo, =red|blue|green= dress, rainy",
+            "photo, =red|blue|green= dress, snow",
         ]
         p.all_negative_prompts = [""] * 3
         p.all_hr_prompts = list(p.all_prompts)
@@ -113,7 +165,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_lora_choice_is_resolved_before_forge_extra_network_parser(self):
         p = self.make_processing(batch_size=1)
-        p.all_prompts = ["1girl, [[<lora:a:1>|<lora:b:1>]]"]
+        p.all_prompts = ["1girl, =<lora:a:1>|<lora:b:1>="]
         p.all_negative_prompts = [""]
         p.all_hr_prompts = list(p.all_prompts)
         p.all_hr_negative_prompts = [""]
@@ -132,6 +184,27 @@ class IntegrationTests(unittest.TestCase):
 
         self.assertEqual(p.prompts[0], "1girl, <lora:b:1>")
         self.assertEqual(p.all_hr_prompts[0], "1girl, <lora:b:1>")
+
+    def test_legacy_bracket_syntax_still_works_integration(self):
+        p = self.make_processing(batch_size=1)
+        p.all_prompts = ["1girl, [[red|blue]] hair"]
+        p.all_negative_prompts = [""]
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = [""]
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = [""]
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=1,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(p.prompts[0], "1girl, blue hair")
 
 
 if __name__ == "__main__":
