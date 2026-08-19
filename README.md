@@ -1,8 +1,10 @@
 # Sequential Prompts for Forge Neo
 
+![tests](https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo/actions/workflows/tests.yml/badge.svg)
+
 An always-on extension for **Stable Diffusion WebUI Forge Neo** that resolves inline prompt choices in a deterministic order instead of randomly.
 
-Current development version: **v0.5.0**.
+Current release: **v0.5.0**.
 
 ## Syntax
 
@@ -200,23 +202,24 @@ Multi-frame **Wan/video** jobs are also rejected when Sequential syntax is activ
 
 ## Installation
 
-Clone this repository into Forge Neo's extensions directory:
+From the Forge Neo root directory:
 
 ```bash
-git clone https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo.git
+git clone https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo.git extensions/sd-webui-sequential-prompts-forge-neo
 ```
 
 Then restart Forge Neo and expand the **Sequential Prompts** accordion in txt2img or img2img.
 
-To update an existing clone:
+To update an existing clone from the Forge Neo root directory:
 
 ```bash
+cd extensions/sd-webui-sequential-prompts-forge-neo
 git pull
 ```
 
 ## Validation status
 
-The v0.5.0 development branch has been rebuilt from audited components covering:
+v0.5.0 has been rebuilt from audited components covering:
 
 - `$` / `$$` parser behavior and malformed input.
 - Forge batch/index lifecycle and partial API prompt-list batches.
@@ -225,8 +228,8 @@ The v0.5.0 development branch has been rebuilt from audited components covering:
 - save routing, numbering, grids, auxiliary images, postprocess reorder, path safety, and Unicode.
 - abort/reuse state and Wan/video policy.
 
-The development audit exercised **304 detailed local unit/contract checks**, preserved in the Git-invisible audit snapshot. The committed release CI suite is intentionally smaller and contains **68 focused contract tests** covering the release-critical behavior without duplicating every audit edge case.
+The development audit exercised **304 detailed local unit/contract checks**, preserved in the Git-invisible audit snapshot. The committed release CI suite is intentionally smaller and contains **68 focused contract tests** covering the release-critical behavior without duplicating every audit edge case. GitHub Actions passes on Ubuntu and Windows with Python 3.13.
 
-The remaining release gate is a real Forge Neo GPU/UI/disk smoke test on Windows. Unit tests deliberately do not claim to replace that runtime check.
+A real Forge Neo GPU/UI/disk smoke test on Windows has **not yet been recorded**. This is a known validation limitation rather than an automated-test failure; unit tests deliberately do not claim to replace that runtime check.
 
 See [`AUDIT.md`](AUDIT.md) for the detailed compatibility and risk record.

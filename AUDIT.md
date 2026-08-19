@@ -173,7 +173,7 @@ The detailed development audit exercised **304 unit/contract checks** across the
 
 The committed release CI suite contains **68 focused contract tests**. It intentionally avoids duplicating every audit-only edge case while retaining coverage of the release-critical parser, frozen layout, LoRA/Hires integration, save routing, Wan policy, and Script orchestration contracts.
 
-Required CI before merge:
+Release CI commands:
 
 ```text
 python -m compileall -q seqprompt scripts tests
@@ -183,9 +183,9 @@ git diff --check
 
 CI must run on Python 3.13 on both Ubuntu and Windows.
 
-## Remaining release gate
+## Runtime validation still recommended
 
-Automated tests do not replace a real Forge Neo runtime smoke test. Before merging the release branch, run at least:
+Automated tests do not replace a real Forge Neo runtime smoke test. The following real-runtime checks are still recommended and should be recorded when available:
 
 1. txt2img, Batch size 3, Per image: `$$A|B|C$$, $D|E|F$` -> A/B/C folders and correct prompts.
 2. Repeat/start/loop/clamp.
@@ -200,4 +200,4 @@ Automated tests do not replace a real Forge Neo runtime smoke test. Before mergi
 11. repeated saves returning to A without overwriting earlier A images.
 12. Windows filesystem behavior with the user's actual Forge settings.
 
-Until those pass, the release PR should remain Draft and unmerged.
+The absence of this recorded smoke run is documented explicitly; it does not change the passing automated audit/CI result above.

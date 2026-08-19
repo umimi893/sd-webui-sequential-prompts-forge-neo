@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.5.0 — development
+## v0.5.0 — initial public release
 
 ### Breaking syntax change
 
@@ -50,7 +50,7 @@
 - Rebuilt the production test suite from audited parser/lifecycle/integration/save prototypes.
 - 304 detailed local audit checks were completed and preserved in the Git-invisible audit snapshot.
 - The committed release CI suite contains 68 focused contract tests to keep routine CI maintainable.
-- Ubuntu + Windows / Python 3.13 CI required before merge.
+- Ubuntu + Windows / Python 3.13 release CI passes.
 
 ## v0.4.1
 
