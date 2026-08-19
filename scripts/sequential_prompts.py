@@ -39,11 +39,6 @@ def _has_sequence_text(value) -> bool:
     return resolve_sequential_blocks(value, 0).matched_blocks > 0
 
 
-def _effective_text(value) -> str:
-    if isinstance(value, list):
-        return str(value[0]) if value else ""
-    return str(value or "")
-
 
 def _selected_script_info(p):
     runner = getattr(p, "scripts", None)
@@ -118,7 +113,7 @@ class Script(scripts.Script):
         with gr.Group(elem_id=self.elem_id("sequential-prompts-group")):
             with gr.Accordion("Sequential Prompts", open=False):
                 enabled = gr.Checkbox(
-                    value=False,
+                    value=True,
                     label="Enable Sequential Prompts",
                     elem_id=self.elem_id("enabled"),
                 )
@@ -126,15 +121,16 @@ class Script(scripts.Script):
                     "Use `$A | B | C$` for ordered choices. "
                     "Use `$$A | B | C$$` to also sort saved images into folders "
                     "named after the selected choice. Multiple `$$...$$` blocks combine "
-                    "as `A__D`."
+                    "as `A__D`. **Default behavior** is batch-friendly: with Batch size 3, "
+                    "the recommended mode gives `AAA → BBB → CCC`."
                 )
                 advance_mode = gr.Radio(
                     choices=[
-                        ("Per image: A → B → C", "image"),
-                        ("Per batch: AAA → BBB → CCC", "batch"),
+                        ("One choice per batch (recommended): AAA → BBB → CCC", "batch"),
+                        ("Advance every image: ABC → ABC → ABC", "image"),
                     ],
-                    value="image",
-                    label="Advance sequence",
+                    value="batch",
+                    label="Sequence grouping",
                     elem_id=self.elem_id("advance-mode"),
                 )
                 repeat_each = gr.Slider(
@@ -142,35 +138,38 @@ class Script(scripts.Script):
                     maximum=100,
                     step=1,
                     value=1,
-                    label="Repeat each choice",
+                    label="Hold each choice for N images / batches",
                     info=(
-                        "Per image: 3 gives AAA BBB CCC. "
-                        "Per batch: 3 keeps A for 3 batches, then B for 3 batches."
+                        "Batch mode: how many batches to keep the same choice. "
+                        "Image mode: how many images to keep the same choice. "
+                        "Example: 3 gives AAA BBB CCC. 150 means finish 150 images or "
+                        "150 batches before moving to the next choice."
                     ),
                     elem_id=self.elem_id("repeat-each"),
                 )
-                start_index = gr.Slider(
-                    minimum=0,
-                    maximum=1000,
-                    step=1,
-                    value=0,
-                    label="Start index (0 = first choice)",
-                    elem_id=self.elem_id("start-index"),
-                )
-                end_mode = gr.Radio(
-                    choices=[
-                        ("Loop: A → B → C → A", "loop"),
-                        ("Clamp: A → B → C → C", "clamp"),
-                    ],
-                    value="loop",
-                    label="After the final choice",
-                    elem_id=self.elem_id("end-mode"),
-                )
-                apply_negative = gr.Checkbox(
-                    value=True,
-                    label="Also process negative prompt",
-                    elem_id=self.elem_id("apply-negative"),
-                )
+                with gr.Accordion("Advanced settings", open=False):
+                    start_index = gr.Slider(
+                        minimum=0,
+                        maximum=1000,
+                        step=1,
+                        value=0,
+                        label="Start from choice index (0 = first choice)",
+                        elem_id=self.elem_id("start-index"),
+                    )
+                    end_mode = gr.Radio(
+                        choices=[
+                            ("Loop: A → B → C → A", "loop"),
+                            ("Clamp: A → B → C → C", "clamp"),
+                        ],
+                        value="loop",
+                        label="After the last choice",
+                        elem_id=self.elem_id("end-mode"),
+                    )
+                    apply_negative = gr.Checkbox(
+                        value=True,
+                        label="Also process negative prompt",
+                        elem_id=self.elem_id("apply-negative"),
+                    )
         return [enabled, advance_mode, repeat_each, start_index, end_mode, apply_negative]
 
     def process(self, p, enabled, advance_mode, repeat_each, start_index, end_mode, apply_negative):

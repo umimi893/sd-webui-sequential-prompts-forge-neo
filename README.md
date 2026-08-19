@@ -4,7 +4,7 @@
 
 An always-on extension for **Stable Diffusion WebUI Forge Neo** that resolves inline prompt choices in a deterministic order instead of randomly.
 
-Current release: **v0.5.0**.
+Current release: **v0.5.1**.
 
 ## Syntax
 
@@ -20,7 +20,7 @@ Use a double dollar pair when the selected choice should also determine the outp
 $$front | side | back$$
 ```
 
-The old `=...=`, `==...==`, `[[...]]`, `&...&`, and `&&...&&` forms are **not syntax** in v0.5.0 and remain literal prompt text.
+The old `=...=`, `==...==`, `[[...]]`, `&...&`, and `&&...&&` forms are **not syntax** and remain literal prompt text.
 
 ### Example
 
@@ -28,7 +28,7 @@ The old `=...=`, `==...==`, `[[...]]`, `&...&`, and `&&...&&` forms are **not sy
 1girl, $$front | side | back$$, $day | sunset | night$
 ```
 
-With **Per image** and Batch size 3:
+With **Advance every image** and Batch size 3:
 
 ```text
 image 1: 1girl, front, day     -> front/
@@ -52,9 +52,31 @@ C__F/
 
 ## Sequence modes
 
-### Per image
+### One choice per batch (default / recommended)
 
-The sequence advances once for every image Forge is about to generate.
+This is the default because it matches the most common Batch size workflow. Every image in a Forge batch uses the same choice, then the next batch advances to the next choice.
+
+```text
+$A|B|C$
+```
+
+```text
+batch 1: A, A, A
+batch 2: B, B, B
+batch 3: C, C, C
+```
+
+If **Hold each choice for N images / batches = 3**, then the sequence becomes:
+
+```text
+batch 1-3: A, A, A
+batch 4-6: B, B, B
+batch 7-9: C, C, C
+```
+
+### Advance every image
+
+Use this if you explicitly want mixed choices inside the same batch.
 
 ```text
 $A|B|C$
@@ -79,21 +101,11 @@ batch 1: A, B
 batch 2: C, A
 ```
 
-### Per batch
-
-Every image in a Forge batch uses the same choice:
-
-```text
-batch 1: A, A, A
-batch 2: B, B, B
-batch 3: C, C, C
-```
-
 ### Repeat, start, and end behavior
 
 The UI also provides:
 
-- **Repeat each choice** — e.g. Per image + repeat 3 gives `AAA BBB CCC`.
+- **Hold each choice for N images / batches** — in batch mode, `3` keeps `A` for 3 batches before switching to `B`. In image mode, `3` gives `AAA BBB CCC`. Setting `150` means complete 150 images or 150 batches before moving on.
 - **Start index** — start from a later choice.
 - **Loop** — wrap after the final choice.
 - **Clamp** — stay on the final choice after reaching it.
@@ -139,7 +151,7 @@ However, current Forge Neo applies Extra Network configuration **per batch**, no
 Safe examples include:
 
 - Batch size 1.
-- Per batch mode where every image in the current batch resolves to the same Extra Network setup.
+- One choice per batch mode where every image in the current batch resolves to the same Extra Network setup.
 
 Existing heterogeneous Extra Network prompts that are unrelated to Sequential Prompts are not newly policed by this extension.
 
@@ -177,7 +189,7 @@ Forge's existing **save-to-dirs** behavior is preserved: the Sequential choice f
 
 Forge computes its numeric filename before `before_image_saved`. Moving that file into a new choice folder without recalculating the sequence can cause repeated `00000` names and possible overwrites.
 
-v0.5.0 recomputes the numeric prefix inside the actual destination folder while preserving Forge's own final **Override / Number Suffix** collision policy.
+v0.5.1 recomputes the numeric prefix inside the actual destination folder while preserving Forge's own final **Override / Number Suffix** collision policy.
 
 ## Post-processing identity
 
@@ -208,28 +220,16 @@ From the Forge Neo root directory:
 git clone https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo.git extensions/sd-webui-sequential-prompts-forge-neo
 ```
 
-Then restart Forge Neo and expand the **Sequential Prompts** accordion in txt2img or img2img.
+Then restart Forge Neo and expand the **Sequential Prompts** accordion in txt2img or img2img. The extension is enabled by default; prompts without `$...$` or `$$...$$` remain a behavioral no-op.
 
-To update an existing clone from the Forge Neo root directory:
+To update an existing clone:
 
 ```bash
-cd extensions/sd-webui-sequential-prompts-forge-neo
 git pull
 ```
 
-## Validation status
+## Compatibility
 
-v0.5.0 has been rebuilt from audited components covering:
+Tested by GitHub Actions on **Ubuntu and Windows with Python 3.13**. The release test suite covers sequencing, batching, Hires.fix, LoRA/Extra Networks, Dynamic Prompts coexistence, save routing, numbering, Unicode/path handling, and special-mode guards.
 
-- `$` / `$$` parser behavior and malformed input.
-- Forge batch/index lifecycle and partial API prompt-list batches.
-- LoRA / Extra Networks and Hires.fix.
-- Dynamic Prompts ordering and delimiter conflicts.
-- save routing, numbering, grids, auxiliary images, postprocess reorder, path safety, and Unicode.
-- abort/reuse state and Wan/video policy.
-
-The development audit exercised **304 detailed local unit/contract checks**, preserved in the Git-invisible audit snapshot. The committed release CI suite is intentionally smaller and contains **68 focused contract tests** covering the release-critical behavior without duplicating every audit edge case. GitHub Actions passes on Ubuntu and Windows with Python 3.13.
-
-A real Forge Neo GPU/UI/disk smoke test on Windows has **not yet been recorded**. This is a known validation limitation rather than an automated-test failure; unit tests deliberately do not claim to replace that runtime check.
-
-See [`AUDIT.md`](AUDIT.md) for the detailed compatibility and risk record.
+See [`AUDIT.md`](AUDIT.md) for the detailed compatibility notes.

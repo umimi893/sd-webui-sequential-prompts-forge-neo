@@ -127,6 +127,59 @@ class ScriptContractTests(unittest.TestCase):
         self.assertEqual(script.title(), "Sequential Prompts for Forge Neo")
         self.assertIs(script.show(False), scripts_mod.AlwaysVisible)
 
+    def test_ui_defaults_are_enabled_and_batch_first(self):
+        module, _, _, _ = self.load_script_module()
+        created = []
+
+        class Context:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def component(kind):
+            def make(*args, **kwargs):
+                created.append((kind, args, kwargs))
+                return SimpleNamespace(kind=kind, args=args, kwargs=kwargs)
+
+            return make
+
+        module.gr.Group = Context
+        module.gr.Accordion = Context
+        module.gr.Markdown = component("Markdown")
+        module.gr.Checkbox = component("Checkbox")
+        module.gr.Radio = component("Radio")
+        module.gr.Slider = component("Slider")
+
+        values = module.Script().ui(False)
+        self.assertEqual(len(values), 6)
+
+        enabled = next(
+            item
+            for item in created
+            if item[0] == "Checkbox" and item[2].get("label") == "Enable Sequential Prompts"
+        )
+        grouping = next(
+            item
+            for item in created
+            if item[0] == "Radio" and item[2].get("label") == "Sequence grouping"
+        )
+        hold = next(
+            item
+            for item in created
+            if item[0] == "Slider"
+            and item[2].get("label") == "Hold each choice for N images / batches"
+        )
+
+        self.assertTrue(enabled[2]["value"])
+        self.assertEqual(grouping[2]["value"], "batch")
+        self.assertEqual(grouping[2]["choices"][0][1], "batch")
+        self.assertEqual(hold[2]["value"], 1)
+
     def test_save_callback_is_reload_safe_and_registered(self):
         _, _, registrations, removed = self.load_script_module()
         self.assertEqual(removed, [True])
@@ -183,7 +236,10 @@ class ScriptContractTests(unittest.TestCase):
         p.hr_negative_prompt = ""
         p.all_hr_prompts = [p.hr_prompt]
         p.all_hr_negative_prompts = ["neg"]
-        dp = SimpleNamespace(args_from=1, title=lambda: "Dynamic Prompts")
+        dp = SimpleNamespace(
+            args_from=1,
+            title=lambda: "Dynamic Prompts",
+        )
         p.scripts.alwayson_scripts = [dp]
         p.script_args = [0, True]
         script = module.Script()

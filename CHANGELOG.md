@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.1
+
+- Sequential Prompts is enabled by default. Plain prompts remain unaffected when no `$...$` or `$$...$$` syntax is present.
+- The default grouping is now **one choice per batch** (`AAA → BBB → CCC`).
+- The per-image `ABC` mode remains available for mixed choices inside a batch.
+- Renamed the repeat control to **Hold each choice for N images / batches** and clarified what large values such as 150 mean.
+- Moved Start index, Loop/Clamp, and negative-prompt processing into **Advanced settings**.
+- Simplified the public documentation around validation and release history.
+
 ## v0.5.0 — initial public release
 
 ### Breaking syntax change
@@ -47,10 +56,7 @@
 
 ### Testing
 
-- Rebuilt the production test suite from audited parser/lifecycle/integration/save prototypes.
-- 304 detailed local audit checks were completed and preserved in the Git-invisible audit snapshot.
-- The committed release CI suite contains 68 focused contract tests to keep routine CI maintainable.
-- Ubuntu + Windows / Python 3.13 release CI passes.
+- Release contract tests run on Ubuntu and Windows with Python 3.13.
 
 ## v0.4.1
 
