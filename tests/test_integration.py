@@ -102,6 +102,37 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(p.all_prompts, ["A, D", "B, E", "C, F"])
         self.assertEqual(p._seqprompt_output_folders, {0: "A", 1: "B", 2: "C"})
 
+    def test_repeated_batch_hook_preserves_existing_folder_mapping(self):
+        p = self.make_processing(batch_size=1)
+        p.all_prompts = ["==A|B=="]
+        p.all_negative_prompts = [""]
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = [""]
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = [""]
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=0,
+            end_mode="loop",
+            apply_negative=True,
+        )
+        self.assertEqual(p._seqprompt_output_folders, {0: "A"})
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=0,
+            end_mode="loop",
+            apply_negative=True,
+        )
+        self.assertEqual(p._seqprompt_output_folders, {0: "A"})
+
     def test_multiple_folder_markers_combine_names(self):
         p = self.make_processing()
         p.all_prompts = ["==A|B|C==, ==D|E|F=="] * 3
@@ -130,6 +161,43 @@ class IntegrationTests(unittest.TestCase):
         p = self.make_processing()
         self.apply(p, 0, mode="image")
         self.assertEqual(p._seqprompt_output_folders, {})
+
+    def test_partial_final_batch_uses_correct_global_indices_and_folders(self):
+        p = self.make_processing(batch_size=3)
+        p.all_prompts = ["==A|B|C=="] * 5
+        p.all_negative_prompts = [""] * 5
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = [""] * 5
+
+        p.prompts = p.all_prompts[0:3]
+        p.negative_prompts = p.all_negative_prompts[0:3]
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=0,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        p.prompts = p.all_prompts[3:6]
+        p.negative_prompts = p.all_negative_prompts[3:6]
+        apply_processing_batch(
+            p,
+            batch_number=1,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=0,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(p.all_prompts, ["A", "B", "C", "A", "B"])
+        self.assertEqual(
+            p._seqprompt_output_folders,
+            {0: "A", 1: "B", 2: "C", 3: "A", 4: "B"},
+        )
 
     def test_dynamic_prompt_style_expansion_can_happen_before_batch_hook(self):
         p = self.make_processing()
@@ -184,6 +252,74 @@ class IntegrationTests(unittest.TestCase):
 
         self.assertEqual(p.prompts[0], "1girl, <lora:b:1>")
         self.assertEqual(p.all_hr_prompts[0], "1girl, <lora:b:1>")
+
+    def test_folder_marker_with_lora_records_sanitized_folder_and_resolves_prompt(self):
+        p = self.make_processing(batch_size=1)
+        p.all_prompts = ["==<lora:a:1>|<lora:b:1>=="]
+        p.all_negative_prompts = [""]
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = [""]
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = [""]
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=1,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(p.prompts[0], "<lora:b:1>")
+        self.assertEqual(p._seqprompt_output_folders, {0: "lora_b_1"})
+
+    def test_negative_folder_marker_never_controls_output_folder(self):
+        p = self.make_processing(batch_size=1)
+        p.all_prompts = ["=A|B="]
+        p.all_negative_prompts = ["==nA|nB=="]
+        p.all_hr_prompts = list(p.all_prompts)
+        p.all_hr_negative_prompts = list(p.all_negative_prompts)
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = list(p.all_negative_prompts)
+        p._seqprompt_output_folders = {}
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=1,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(p.negative_prompts[0], "nB")
+        self.assertEqual(p._seqprompt_output_folders, {})
+
+    def test_hires_only_folder_marker_never_controls_output_folder(self):
+        p = self.make_processing(batch_size=1)
+        p.all_prompts = ["=A|B="]
+        p.all_negative_prompts = [""]
+        p.all_hr_prompts = ["==hA|hB=="]
+        p.all_hr_negative_prompts = [""]
+        p.prompts = list(p.all_prompts)
+        p.negative_prompts = [""]
+        p._seqprompt_output_folders = {}
+
+        apply_processing_batch(
+            p,
+            batch_number=0,
+            advance_mode="image",
+            repeat_each=1,
+            start_index=1,
+            end_mode="loop",
+            apply_negative=True,
+        )
+
+        self.assertEqual(p.all_hr_prompts[0], "hB")
+        self.assertEqual(p._seqprompt_output_folders, {})
 
     def test_legacy_bracket_syntax_still_works_integration(self):
         p = self.make_processing(batch_size=1)

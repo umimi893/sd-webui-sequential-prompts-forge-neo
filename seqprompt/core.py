@@ -82,12 +82,15 @@ def _can_end_equals_block(text: str, delimiter_end: int) -> bool:
 def _find_closing_double_equals(text: str, start: int) -> int:
     cursor = start
     while cursor < len(text) - 1:
-        if (
-            text.startswith("==", cursor)
-            and not _is_escaped(text, cursor)
-            and _can_end_equals_block(text, cursor + 2)
-        ):
-            return cursor
+        if text.startswith("==", cursor) and not _is_escaped(text, cursor):
+            if _can_end_equals_block(text, cursor + 2):
+                return cursor
+
+            # A second standalone opening marker before a valid close means the
+            # first block is malformed. Do not swallow the later valid block.
+            if _can_start_equals_block(text, cursor):
+                return -1
+
         cursor += 1
     return -1
 
@@ -109,6 +112,12 @@ def _find_closing_single_equals(text: str, start: int) -> int:
 
         if _can_end_equals_block(text, cursor + 1):
             return cursor
+
+        # An unescaped standalone opener before a valid close indicates that the
+        # current block was left unclosed. Leave it literal and let the scanner
+        # parse the later block independently.
+        if _can_start_equals_block(text, cursor):
+            return -1
 
         cursor += 1
     return -1
@@ -164,12 +173,11 @@ def resolve_sequential_blocks(
         ):
             end = _find_closing_double_equals(text, index + 2)
             if end >= 0:
-                body = text[index + 2 : end]
-                selected = (
-                    _select_choice(body, sequence_index, end_mode)
-                    if _valid_equals_body(body)
-                    else None
-                )
+                body = text[index + 2 : end].strip()
+                # The doubled marker is deliberately explicit, so allow visual
+                # padding such as ``== A | B ==``. The single-equals form stays
+                # strict to avoid assignment-like false positives.
+                selected = _select_choice(body, sequence_index, end_mode) if body else None
                 if selected is not None:
                     output.append(selected)
                     folder_choices.append(selected)

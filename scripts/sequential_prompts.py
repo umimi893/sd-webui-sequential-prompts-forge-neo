@@ -5,11 +5,7 @@ import modules.scripts as scripts
 from modules import script_callbacks
 
 from seqprompt import __version__
-from seqprompt.folders import (
-    mark_next_grid_save,
-    reset_grid_save_marker,
-    route_image_save,
-)
+from seqprompt.folders import route_image_save
 from seqprompt.integration import apply_processing_batch
 
 
@@ -109,7 +105,6 @@ class Script(scripts.Script):
         # a processing object and disables this extension on a later run.
         p._seqprompt_folder_routing_enabled = False
         p._seqprompt_output_folders = {}
-        reset_grid_save_marker()
 
         params = getattr(p, "extra_generation_params", None)
         if not isinstance(params, dict):
@@ -165,12 +160,29 @@ class Script(scripts.Script):
             apply_negative=bool(apply_negative),
         )
 
+    def postprocess(
+        self,
+        p,
+        processed,
+        enabled,
+        advance_mode,
+        repeat_each,
+        start_index,
+        end_mode,
+        apply_negative,
+    ):
+        # Core final/auxiliary saves and the optional final grid have already
+        # completed before ScriptRunner.postprocess(). Drop private routing state
+        # so later/manual/third-party saves cannot accidentally reuse a stale
+        # batch_index from this generation. Generation metadata is preserved.
+        p._seqprompt_folder_routing_enabled = False
+        p._seqprompt_output_folders = {}
 
-script_callbacks.on_image_grid(
-    mark_next_grid_save,
-    name="sequential-prompts-grid-marker",
-)
 
+# Full Forge script reloads clear callbacks globally, but source-only/hot reloads
+# can import this file again. Remove any older registrations from this same file
+# before adding the current save callback.
+script_callbacks.remove_current_script_callbacks()
 script_callbacks.on_before_image_saved(
     route_image_save,
     name="sequential-prompts-choice-folders",

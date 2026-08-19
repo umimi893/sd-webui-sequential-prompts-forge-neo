@@ -1,160 +1,182 @@
-# Compatibility audit
+# Forge Neo Compatibility Audit — v0.4.2 candidate
 
-Audit date: 2026-08-19
+Audit date: 2026-08-20 JST
+Target: `Haoming02/sd-webui-forge-classic` branch `neo`
+Verified upstream head: `e782dc3fe07deb4653a8a1a1ad8ffa52783f54c5`
 
-Extension version reviewed: **v0.4.2 candidate**
+This document records the current compatibility assessment for the **draft v0.4.2 candidate**. It intentionally does not claim full release validation: a real Forge Neo GPU/UI/save smoke test remains outstanding.
 
-Target: Stable Diffusion WebUI Forge Neo, `Haoming02/sd-webui-forge-classic`, branch `neo`.
+## Scope re-checked
 
-Upstream commit inspected: `e782dc3fe07deb4653a8a1a1ad8ffa52783f54c5` (re-verified as the current `neo` head on 2026-08-19).
+The audit traced the current Forge Neo implementation for:
 
-## Scope
-
-This second full review retraced the extension against Forge Neo's current prompt, batching, Hires.fix, image-save, grid-save, and UI-save paths. It includes:
-
-- `StableDiffusionProcessing.setup_prompts()`;
-- `ScriptRunner.process()` and `before_process_batch()` ordering;
-- prompt/negative slicing for partial and full batches;
-- Dynamic Prompts-style replacement of `all_prompts`, `n_iter`, seeds, and Hires arrays;
+- `setup_prompts()` and prompt-list sizing;
+- `process()` / `before_process_batch()` ordering;
+- partial final batches;
 - Extra Networks / LoRA parsing;
-- Hires.fix first-pass and second-pass prompt handling;
-- `iteration`, `batch_index`, and global image indexing;
-- final images and auxiliary saves (pre-restoration, pre-color-correction, masks/composites);
-- `images.save_image()`, Forge filename numbering, collision behavior, and `before_image_saved`;
-- grid creation/saving, including shared sample/grid directories and custom filename settings;
-- UI manual-save behavior;
-- Windows filename rules and reserved device names;
-- UTF-8 filename-component length on Linux/ext4;
-- reused processing-object state;
-- Python 3.13 unit/contract coverage.
+- Hires.fix prompt arrays and first-pass intermediate saves;
+- `iteration` and `batch_index` assignment;
+- final-image and auxiliary-image save calls;
+- final grid construction/save;
+- `images.save_image()` filename generation and `before_image_saved` timing;
+- `save_images_add_number`, empty decorations, `basename`, `forced_filename`, and collision policy;
+- img2img Batch processing-object reuse;
+- global callback ordering and script source reload behavior;
+- Forge's queued Gradio generation path;
+- current Forge-compatible Dynamic Prompts fork behavior.
 
-## Findings from the second audit
+The Forge prompt parser was also re-checked: `=` is plain prompt text in the current schedule grammar, while the extension resolves its syntax before conditioning/Extra Networks parsing.
 
-### High — choice-folder routing could reset Forge's numeric counter and overwrite a previous output
+## Findings and fixes
 
-Forge creates the filename and ascending numeric prefix **before** calling `before_image_saved`. v0.4.1 then redirected that finished filename into `A/`, `B/`, etc. Because the image never landed in the original directory, Forge's next sequence scan could see the original directory as empty and propose the same numeric prefix again.
+### High — v0.4.1 could reset destination numbering and overwrite routed images
 
-Forge's normal defaults use an ascending number and allow the `Override` collision behavior. Repeated choice folders combined with a repeated seed/prompt or a custom filename pattern could therefore overwrite a prior routed image.
+Forge computes a numbered filename in its original output directory **before** `before_image_saved`. v0.4.1 then moved that filename into `A/`, `B/`, etc. Because the original directory could remain empty, Forge could propose the same number again. With Forge's normal Override collision behavior, a later routed save could replace an earlier file.
 
-**Fix in v0.4.2:** when Forge numbering is enabled, Sequential Prompts recomputes the numeric prefix against the **actual destination choice folder**. A regression test simulates two identical Forge-proposed `00000-same.png` paths routed to the same `A/` folder and verifies the second becomes `00001-same.png` without modifying the first.
+**v0.4.2 fix:** when Forge actually enabled numbering, the extension mirrors Forge's sequence scan in the **real destination choice folder** and rewrites only the numeric prefix. Regression coverage simulates Forge proposing `00000-same.png` twice and verifies the routed results become `A/00000-same.png` and `A/00001-same.png`.
 
-### Medium — Japanese/emoji folder names were limited by characters, not UTF-8 bytes
+### High — the first v0.4.2 grid-marker approach also matched live-preview grids
 
-v0.4.1 limited folder components by Python character count. A string can be well under the character limit while exceeding a filesystem's byte limit (for example, many Japanese characters or emoji on ext4).
+An earlier candidate used the global `image_grid` callback as a “next save is a grid” marker. Forge also calls `images.image_grid()` to build live-preview progress grids. A live-preview callback could therefore cause the next real sample save to be skipped by choice-folder routing.
 
-**Fix in v0.4.2:** folder components and combined names are bounded by both character count and UTF-8 byte count, with a deterministic hash suffix when shortened.
+**Final fix:** no persistent grid marker is used. `before_image_saved` is called synchronously from Forge's `modules.images.save_image()`, so the extension inspects that active call frame and reads Forge's exact `grid` value. A core saved grid has `grid=True`; a normal sample has `grid=False`. Live-preview grid creation never leaves stale save state.
 
-### Medium — a grid could be routed into the last image's choice folder under unusual save settings
+### High/Medium — save numbering must match Forge's exact branch, not the global option alone
 
-v0.4.1 inferred grids from paths/filenames. If sample and grid roots were shared and Forge generated a custom/extended grid filename that did not contain an obvious `grid` token, the stale final `batch_index` could make the grid look like a normal final image.
+Forge can force numbering when the rendered filename decoration is empty even if the global add-number setting is off. Conversely, `forced_filename` bypasses Forge's numbering branch entirely. Numeric seed-based filenames must not be mistaken for counters when numbering is disabled.
 
-**Fix in v0.4.2:** the extension registers Forge Neo's `image_grid` callback and marks the immediately following grid save on the current generation thread. `before_image_saved` consumes that marker and never routes the grid. A narrow filename heuristic remains only as a fallback.
+**Fix:** the synchronous Forge save context also records the already-computed `add_number`, `basename`, and `forced_filename` values. Exact values are authoritative. `forced_filename` is never renumbered. Conservative fallback logic is used only if a future Forge refactor prevents reading the current context.
 
-### Medium — equals syntax still had avoidable false-positive forms
+### Medium — partial save context needed a conservative grid fallback
 
-v0.4.1 protected the opening `=` boundary, but a closing delimiter attached directly to a word was still accepted. Spaced assignment-like text such as `foo = bar|baz = qux` also resembled the lightweight syntax.
+A future Forge version could retain the same `save_image()` call while renaming/removing only its local `grid` variable. Treating “frame found” as equivalent to `grid=False` would then be unsafe.
 
-**Fix in v0.4.2:** both opening and closing equals delimiters must be at token boundaries, and padding whitespace immediately inside `=...=` / `==...==` is not accepted. The documented form remains `=A | B | C=`.
+**Fix:** `grid=None` is treated as unknown and falls back to output-root / conservative filename checks. Nested roots use the more-specific configured root. If sample and grid roots are identical/ambiguous, fallback fails closed and does not route the save. Exact `grid=False` still allows legitimate sample filenames that happen to contain the word `grid`.
 
-### Low/Medium — Windows reserved device-name coverage was incomplete
+### Medium — Forge's current statvfs path slicing can cut a post-callback path
 
-v0.4.1 covered `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, and `LPT1`–`LPT9`, but not Microsoft's documented superscript forms such as `COM¹` and `LPT³`.
+On platforms exposing `os.statvfs`, current Forge Neo applies `f_namemax` to the **whole post-callback path string**, even though `f_namemax` is a component limit. Adding a choice directory can therefore make Forge slice through the added directory or reduce the remaining filename to a collision-prone fragment on already-long paths.
 
-**Fix in v0.4.2:** the complete documented superscript COM/LPT variants are sanitized too.
+**Fix:** the extension budgets only its added folder before returning from the callback. It preserves the entire added directory and a useful filename prefix (the complete stem when short, otherwise at least 32 characters). If the existing parent path leaves no safe budget, folder routing is skipped for that save rather than making the original Forge save less safe.
 
-### Low — stale generation metadata could survive a reused disabled run
+### Medium — long Unicode folder names need byte-aware limits
 
-Routing state was already reset, but `Sequential ...` infotext metadata could remain if an API/client reused the same processing object and disabled the extension on the next run.
+Character limits alone do not protect Japanese/emoji names on filesystems with byte-based component limits.
 
-**Fix in v0.4.2:** all extension-owned generation metadata is cleared before the enabled check while unrelated metadata is preserved.
+**Fix:** each component and the combined folder are bounded by both character count and UTF-8 byte length. Deterministic hash suffixes preserve stable naming after truncation.
 
-### QA — Windows-specific behavior was only tested on Ubuntu CI
+### Medium — Windows reserved/device names were broader than the initial list
 
-The extension contains Windows filename rules but v0.4.1 CI ran only on Ubuntu.
+Classic names (`CON`, `NUL`, `COM1`, etc.) are not the complete Windows reservation set.
 
-**Fix in v0.4.2:** the GitHub Actions matrix now runs Python 3.13 tests on both `ubuntu-latest` and `windows-latest`.
+**Fix:** the sanitizer keeps the explicit classic/superscript COM/LPT list and also uses Python 3.13 `ntpath.isreserved()` when available, covering names such as `CONIN$` and `CONOUT$`.
 
-## Previous important fixes retained
+### Medium — malformed equals blocks and assignment-like text needed stricter boundaries
 
-### High — Hires.fix prompt arrays
+An unclosed equals block could previously search too far, and lightweight `=...=` syntax could collide with ordinary `key=value`-style prompt text.
 
-Forge Neo maintains independent `all_hr_prompts` and `all_hr_negative_prompts`. They are resolved at the same global image index as the first pass.
+**Fix:** opening and closing boundaries are checked; malformed earlier blocks remain literal without swallowing a later valid standalone block. The single-equals form remains strict about padding immediately inside its delimiters. The more explicit doubled folder form intentionally accepts visual padding such as `== A | B | C ==`.
 
-### High — extension ordering / Dynamic Prompts
+### Medium — repeated batch-hook invocation could delete an already-recorded folder mapping
 
-Actual sequential resolution remains in `before_process_batch()`, after all `process()` callbacks and before Forge Neo parses Extra Networks. Dynamic Prompts can therefore expand/replace prompt lists first, and LoRA tags selected by Sequential Prompts are available before Extra Networks parsing.
+The first `before_process_batch()` call resolves `==...==` into plain prompt text. If the same batch hook were invoked again, the marker is naturally gone. Treating “no marker found” as an instruction to delete the folder would lose the first mapping.
 
-### Medium — backslash handling
+**Fix:** folder mappings are recorded only when a folder marker is actually resolved. Run-level state is reset in `Script.process()`, so a repeated hook becomes idempotent instead of destructive.
 
-Only `\|`, `\=`, and `\\` are interpreted as escapes. Other backslashes remain literal.
+### Medium/Low — stale private state could affect later saves or reused processing objects
 
-## Folder-marker properties re-verified
+API/batch code can reuse processing objects, and global save callbacks outlive one generation.
 
-`==A|B|C==` adds save-time folder routing while `=A|B|C=` remains a normal sequence.
+**Fix:** `Script.process()` clears private routing state and extension-owned metadata before checking the enabled flag. `Script.postprocess()` clears the private folder map/routing flag again after Forge's final/auxiliary/grid saves have completed, while leaving generation metadata intact. Manual UI saves therefore do not inherit a stale generated-image index.
 
-Verified properties include:
+### QA — source/hot reload could duplicate the global save callback
 
-- doubled markers are parsed before single-equals markers;
-- normal markers never contribute folder names;
-- multiple doubled markers combine deterministically as `A__D`;
-- global index is `iteration * batch_size + local image index`;
-- partial final batches are bounded by the actual sliced prompt list;
-- folder routing derives only from the main positive prompt;
-- Hires positive/negative arrays use the same sequence index;
-- Hires first-pass intermediates are skipped while `is_hr_pass` is true;
-- final Hires outputs are routed after Forge resets `is_hr_pass`;
-- auxiliary image saves exposed with the same `batch_index` follow the image's choice folder;
-- grids are skipped by the grid-save marker;
-- manual UI saves reconstruct a lightweight processing object without the private routing-enable state, so they are not unintentionally rerouted;
-- Windows-invalid characters, control characters, `..`, slashes, reserved device names, long Unicode names, and path containment are handled defensively;
-- Forge numbering is recomputed per destination choice folder when numbering is enabled.
+**Fix:** the script removes callbacks previously registered from the same source file before registering the current `before_image_saved` callback. The callback itself is also idempotent for one `ImageSaveParams` object.
+
+## Compatibility conclusions
+
+### Batch size / count
+
+Per-image sequencing uses Forge's global image position `batch_number * batch_size + local_index`. A partial final batch therefore continues at the correct global position. Per-batch mode intentionally advances using the full configured Forge batch unit.
+
+### Hires.fix
+
+`all_hr_prompts` and `all_hr_negative_prompts` are resolved before Forge slices/parses them. Hires first-pass intermediate saves are excluded while Forge reports `is_hr_pass=True`. Folder identity is intentionally taken only from the main positive prompt.
+
+### LoRA / Extra Networks
+
+Resolution occurs in `before_process_batch()`, which current Forge documents/calls before Extra Networks parsing. LoRA tags can therefore be selected normally. Folder-marker LoRA choices are independently sanitized only for filesystem naming.
+
+### Dynamic Prompts
+
+The current Forge-compatible Dynamic Prompts fork expands/replaces `p.all_prompts`, negative prompts, seeds/count, and Hires arrays in its `process()` callback. Sequential Prompts intentionally does not resolve templates in its own `process()`; it waits until `before_process_batch()`. This makes Dynamic Prompts expansion happen first regardless of the relative order of their `process()` callbacks.
+
+### img2img Batch
+
+Forge processes each input file as a separate `process_images()` invocation while reusing the processing object. Because Sequential Prompts resets run state at each invocation, the sequence **restarts from Start index for every input file**. This is deterministic but is not a directory-wide global counter.
 
 ## Automated verification
 
-Run:
+Current local Python 3.13 verification:
 
 ```bash
 python -m compileall -q seqprompt scripts tests
 python -m unittest discover -s tests -v
+git diff --check
 ```
 
-Local Python 3.13 result for the v0.4.2 candidate: **68 tests passed** and `git diff --check` passed.
-
-The GitHub Actions workflow is configured to run the same compile/tests on both Ubuntu and Windows. A branch/PR CI run is required before this candidate should replace v0.4.1 on `main`.
+Result: **94 tests passed**; compile and whitespace checks passed.
 
 Coverage includes:
 
-- Per image / Per batch sequencing;
-- Batch size/count, repeat, start index, Loop, Clamp;
-- `=...=`, `==...==`, and legacy `[[...]]`;
-- opening/closing token-boundary false-positive protection;
-- multiple blocks and differing choice counts;
-- escaping and unrelated backslashes;
-- positive/negative/Hires array synchronization;
+- Per image / Per batch; Batch size/count; Repeat; Start; Loop/Clamp;
+- full and partial batches;
+- normal, doubled-folder, and legacy syntax;
+- malformed-block recovery and assignment/key-value false-positive boundaries;
+- escaping and unrelated-backslash preservation;
+- repeated batch-hook idempotency;
+- positive/negative/Hires synchronization;
+- negative/Hires-only folder markers not controlling output directories;
 - Dynamic Prompts-style pre-expansion;
-- LoRA / Extra Network choices;
-- per-image folder mapping across batches;
-- per-folder numeric sequence preservation / overwrite regression;
-- Windows invalid/reserved names, including superscript device names;
-- traversal/containment guards;
-- UTF-8 byte-aware Unicode shortening;
-- custom/shared-directory grid saves;
-- Hires intermediates and auxiliary saves;
-- disabled/reused processing state and metadata;
-- Forge-style callback registration.
+- normal and folder-marker LoRA choices;
+- multi-marker folder naming;
+- Windows invalid/reserved/device names;
+- Unicode character/byte limits;
+- traversal/symlink-aware containment;
+- exact Forge save-context extraction using real Python frames;
+- exact/fallback grid detection, including shared and nested output roots;
+- destination-folder numbering, basename handling, forced filenames, numeric-seed false positives;
+- long Forge parent-path budgeting;
+- duplicate save-callback invocation;
+- reused/disabled run-state cleanup;
+- Forge-style Script callback contract.
 
-## Residual risks / not yet proven
+The GitHub Actions matrix is configured for Python 3.13 on both Ubuntu and Windows. The revised third-pass head must pass both jobs again after it is pushed.
 
-1. **A real GPU-backed Forge Neo generation has still not been executed by this automated suite.** Actual txt2img/img2img/Hires output is the final release gate.
-2. Windows CI can validate Python/filesystem behavior, but a real Forge Neo save on the user's Windows installation is still more valuable than a stubbed contract test.
-3. Another third-party extension can intentionally rewrite prompts after this extension's `before_process_batch()` callback if callback priority is manually changed.
-4. The lightweight `=...=` syntax can never be mathematically collision-proof with every possible natural prompt. The boundary rules substantially reduce false positives; use the documented standalone form.
-5. Distinct raw choices can sanitize to the same folder component (including case-only differences on normal Windows filesystems); they will share a folder, though the per-folder numbering guard prevents routing-induced filename-counter reset from overwriting them.
-6. Nested sequential blocks are intentionally unsupported.
-7. Sequential wildcard files are not implemented.
-8. Video/Wan-specific batching is not explicitly release-tested.
-9. The repository still has no explicit license file.
+## Residual risks / release gates
+
+1. **Real Forge Neo GPU/UI E2E remains the final release gate.** Unit/contract tests cannot prove actual Windows txt2img/img2img/Hires generation and disk writes end to end.
+2. **Late third-party image reordering is not fully trackable.** An extension may add/remove/reorder tensors in `postprocess_batch_list`. Forge requires it to update prompts/seeds, but Forge exposes no stable custom per-image identity that this extension can use to follow arbitrary reordering, especially when LoRA-only choices collapse to the same parsed prompt text.
+3. **Callback priority remains user-configurable.** An extension intentionally rewriting prompts after this extension's `before_process_batch` can change the final result; a later `before_image_saved` callback can also move/rename the path after this extension.
+4. **img2img Batch restarts per input file.** Directory-wide continuation is not implemented.
+5. **Video/Wan batching is not release-tested.** Wan can change effective sampling batch behavior relative to configured `p.batch_size`.
+6. **Concurrent direct callers outside Forge's normal queue can race destination numbering.** Normal Gradio GPU jobs are serialized by Forge's queue lock.
+7. Distinct raw choices can sanitize/case-fold/join to the same directory and intentionally share its numbering sequence.
+8. Extremely long **pre-existing** output paths can still fail in Forge/OS code even when this extension elects not to add a folder.
+9. Nested sequential blocks and native sequential wildcard files remain unsupported.
+10. The repository has no explicit license file.
 
 ## Release recommendation
 
-Do **not** describe v0.4.1 as fully safe after this second audit because the save-numbering issue is material. The v0.4.2 candidate addresses every concrete issue found in this pass, but it should first pass the new Ubuntu + Windows CI matrix and then receive a clean Forge Neo smoke test, especially on Windows.
+Keep PR #2 **draft**. Push this third-pass implementation, require fresh Ubuntu + Windows CI success, then run a real Forge Neo smoke matrix before merging to `main`:
+
+1. txt2img Per image, Batch size 1/count 3 → A/B/C;
+2. txt2img Per image, Batch size 3 → A/B/C in one batch;
+3. Per batch → AAA/BBB/CCC;
+4. `==A|B|C==, =D|E|F=` → A/B/C folders with matching prompt pairs;
+5. repeated cycle back into A verifies no overwrite and ascending destination numbering;
+6. shared/custom grid output configuration verifies grid exclusion;
+7. Hires.fix, including optional first-pass save;
+8. Dynamic Prompts enabled;
+9. LoRA choices and folder-marker LoRA choices;
+10. img2img normal and img2img Batch behavior on Windows.

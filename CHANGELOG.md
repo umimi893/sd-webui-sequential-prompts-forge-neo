@@ -1,15 +1,23 @@
 # Changelog
 
-## v0.4.2
+## v0.4.2 (candidate)
 
-- Fixed a **high-severity save-routing issue** where Forge could compute the same numeric prefix repeatedly in the original output directory after files were redirected into choice folders. Sequential Prompts now recomputes the ascending prefix against the actual destination folder before saving.
-- Added UTF-8 byte-aware folder-name limits so long Japanese/emoji choices stay below common filesystem component limits.
-- Added the complete documented Windows reserved device-name set, including superscript COM/LPT names.
-- Replaced grid-path guessing with a Forge `image_grid` callback marker, preventing grids from being routed into the last choice folder under shared/custom save settings.
-- Clear stale Sequential Prompts generation metadata when a reused processing object later runs with the extension disabled.
-- Hardened both opening and closing `=...=` / `==...==` token boundaries and stopped accepting padding spaces immediately inside equals delimiters.
-- Expanded CI to Python 3.13 on both Ubuntu and Windows.
-- Expanded automated coverage to 68 tests.
+- Fixed a high-severity choice-folder overwrite risk by mirroring Forge numbering against the actual routed destination folder.
+- Replaced the earlier global/final-grid marker design after a third audit found it could be polluted by Forge live-preview grids.
+- Grid exclusion now reads Forge's exact synchronous `images.save_image()` context (`grid`) at `before_image_saved` time, with conservative fallback only when that context is unavailable or partial.
+- Numbering now follows Forge's exact computed `add_number`, `basename`, and `forced_filename` state; forced/custom names and numeric seed filenames are no longer reinterpreted as counters.
+- Added partial-context fallback coverage so a future Forge refactor that removes only the local `grid` variable fails conservatively.
+- Added UTF-8 byte-aware folder limits and deterministic shortening for long Japanese/emoji names.
+- Added a defensive budget for Forge Neo's current post-callback full-path `f_namemax` slicing; the extension preserves its whole added directory plus a useful filename prefix, or skips routing when no safe budget remains.
+- Expanded Windows reserved-name coverage through Python 3.13 `ntpath.isreserved()` plus explicit classic/superscript device names.
+- Hardened equals-block opening/closing boundaries and malformed-block recovery; the explicit doubled folder form accepts `== A | B | C ==` padding while the lighter single-equals form stays strict.
+- Made repeated `before_process_batch()` invocation non-destructive to an already-recorded folder mapping.
+- Clear stale Sequential Prompts state/metadata on reused processing objects and clear private routing state again after generation saves complete.
+- Made the global save callback safe against source/hot reload duplication and repeated invocation of the same save params.
+- Added direct coverage that LoRA folder markers route correctly while negative/Hires-only doubled markers never control the output folder.
+- Documented deterministic img2img Batch behavior: the sequence restarts for each input file.
+- Expanded CI to Python 3.13 on Ubuntu and Windows.
+- Expanded automated coverage to **94 tests**.
 
 ## v0.4.1
 

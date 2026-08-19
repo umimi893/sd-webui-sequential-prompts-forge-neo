@@ -68,7 +68,12 @@ def apply_processing_batch(
             )
             if resolved is not None:
                 batch_prompts[local_index] = resolved
-                remember_output_folder(p, global_index, folder_choices)
+                # A second invocation for the same batch sees an already-resolved
+                # prompt with no marker left. Preserve the mapping recorded by
+                # the first invocation instead of deleting it. Run-level state is
+                # reset in Script.process(), so no explicit empty mapping is needed.
+                if folder_choices:
+                    remember_output_folder(p, global_index, folder_choices)
 
     if apply_negative:
         batch_negative_prompts = getattr(p, "negative_prompts", None)

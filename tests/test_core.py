@@ -35,6 +35,11 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(replace_sequential_blocks(prompt, 2), "x C y")
         self.assertEqual(replace_sequential_blocks(prompt, 3), "x A y")
 
+    def test_folder_marker_allows_inner_padding_spaces(self):
+        resolution = resolve_sequential_blocks("== A | B | C ==", 1)
+        self.assertEqual(resolution.text, "B")
+        self.assertEqual(resolution.folder_choices, ("B",))
+
     def test_folder_marker_resolves_and_records_choice(self):
         resolution = resolve_sequential_blocks("==A|B|C==", 1)
         self.assertEqual(resolution.text, "B")
@@ -101,6 +106,16 @@ class CoreTests(unittest.TestCase):
     def test_padding_spaces_inside_equals_delimiters_are_not_syntax(self):
         prompt = "= A | B ="
         self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
+
+    def test_malformed_single_block_does_not_swallow_later_valid_block(self):
+        prompt = "=A|B, =C|D="
+        self.assertEqual(replace_sequential_blocks(prompt, 1), "=A|B, D")
+
+    def test_malformed_folder_block_does_not_swallow_later_valid_block(self):
+        prompt = "==A|B, ==C|D=="
+        resolution = resolve_sequential_blocks(prompt, 0)
+        self.assertEqual(resolution.text, "==A|B, C")
+        self.assertEqual(resolution.folder_choices, ("C",))
 
     def test_equals_block_can_follow_comma_without_space(self):
         prompt = "tag,=A|B=,tail"

@@ -14,6 +14,7 @@ class ScriptContractTests(unittest.TestCase):
         fake_scripts = ModuleType("modules.scripts")
         fake_callbacks = ModuleType("modules.script_callbacks")
         registrations = []
+        removals = []
 
         class FakeScript:
             pass
@@ -21,13 +22,13 @@ class ScriptContractTests(unittest.TestCase):
         def on_before_image_saved(callback, *, name=None):
             registrations.append(("before_image_saved", callback, name))
 
-        def on_image_grid(callback, *, name=None):
-            registrations.append(("image_grid", callback, name))
+        def remove_current_script_callbacks():
+            removals.append(True)
 
         fake_scripts.Script = FakeScript
         fake_scripts.AlwaysVisible = object()
         fake_callbacks.on_before_image_saved = on_before_image_saved
-        fake_callbacks.on_image_grid = on_image_grid
+        fake_callbacks.remove_current_script_callbacks = remove_current_script_callbacks
         fake_modules.scripts = fake_scripts
         fake_modules.script_callbacks = fake_callbacks
 
@@ -47,27 +48,25 @@ class ScriptContractTests(unittest.TestCase):
             assert spec.loader is not None
             spec.loader.exec_module(module)
 
-        return module, fake_scripts, registrations
+        return module, fake_scripts, registrations, removals
 
     def test_script_is_always_visible(self):
-        module, fake_scripts, _ = self.load_script_module()
+        module, fake_scripts, _, _ = self.load_script_module()
         script = module.Script()
         self.assertIs(script.show(False), fake_scripts.AlwaysVisible)
         self.assertIs(script.show(True), fake_scripts.AlwaysVisible)
 
-    def test_save_callbacks_are_registered(self):
-        _, _, registrations = self.load_script_module()
-        self.assertEqual(len(registrations), 2)
+    def test_save_callback_is_registered(self):
+        _, _, registrations, removals = self.load_script_module()
+        self.assertEqual(removals, [True])
+        self.assertEqual(len(registrations), 1)
         self.assertEqual(
             [(kind, name) for kind, _, name in registrations],
-            [
-                ("image_grid", "sequential-prompts-grid-marker"),
-                ("before_image_saved", "sequential-prompts-choice-folders"),
-            ],
+            [("before_image_saved", "sequential-prompts-choice-folders")],
         )
 
     def test_process_records_metadata_without_destroying_template(self):
-        module, _, _ = self.load_script_module()
+        module, _, _, _ = self.load_script_module()
         script = module.Script()
         p = SimpleNamespace(
             all_prompts=["==A|B|C=="],
@@ -82,7 +81,7 @@ class ScriptContractTests(unittest.TestCase):
         self.assertEqual(p._seqprompt_output_folders, {})
 
     def test_disabled_process_clears_stale_folder_routing_state(self):
-        module, _, _ = self.load_script_module()
+        module, _, _, _ = self.load_script_module()
         script = module.Script()
         p = SimpleNamespace(
             _seqprompt_folder_routing_enabled=True,
@@ -96,7 +95,7 @@ class ScriptContractTests(unittest.TestCase):
         self.assertEqual(p._seqprompt_output_folders, {})
 
     def test_disabled_process_clears_stale_generation_metadata(self):
-        module, _, _ = self.load_script_module()
+        module, _, _, _ = self.load_script_module()
         script = module.Script()
         p = SimpleNamespace(
             extra_generation_params={
@@ -115,7 +114,7 @@ class ScriptContractTests(unittest.TestCase):
         self.assertEqual(p.extra_generation_params, {"Other": "keep"})
 
     def test_process_records_negative_toggle_in_metadata(self):
-        module, _, _ = self.load_script_module()
+        module, _, _, _ = self.load_script_module()
         script = module.Script()
         p = SimpleNamespace(extra_generation_params={})
 
@@ -124,7 +123,7 @@ class ScriptContractTests(unittest.TestCase):
         self.assertFalse(p.extra_generation_params["Sequential negative"])
 
     def test_before_process_batch_resolves_actual_batch_and_folders(self):
-        module, _, _ = self.load_script_module()
+        module, _, _, _ = self.load_script_module()
         script = module.Script()
         p = SimpleNamespace(
             batch_size=3,
@@ -154,6 +153,21 @@ class ScriptContractTests(unittest.TestCase):
         self.assertEqual(p.prompts, ["A", "B", "C"])
         self.assertEqual(p.all_prompts, ["A", "B", "C"])
         self.assertEqual(p._seqprompt_output_folders, {0: "A", 1: "B", 2: "C"})
+
+    def test_postprocess_clears_private_routing_state_but_keeps_metadata(self):
+        module, _, _, _ = self.load_script_module()
+        script = module.Script()
+        p = SimpleNamespace(
+            _seqprompt_folder_routing_enabled=True,
+            _seqprompt_output_folders={0: "A"},
+            extra_generation_params={"Sequential Prompts": "v0.4.2"},
+        )
+
+        script.postprocess(p, SimpleNamespace(), True, "image", 1, 0, "loop", True)
+
+        self.assertFalse(p._seqprompt_folder_routing_enabled)
+        self.assertEqual(p._seqprompt_output_folders, {})
+        self.assertEqual(p.extra_generation_params, {"Sequential Prompts": "v0.4.2"})
 
 
 if __name__ == "__main__":
