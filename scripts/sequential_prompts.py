@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import gradio as gr
 import modules.scripts as scripts
+from modules import script_callbacks
 
 from seqprompt import __version__
+from seqprompt.folders import route_image_save
 from seqprompt.integration import apply_processing_batch
 
 
@@ -26,8 +28,10 @@ class Script(scripts.Script):
                 )
 
                 gr.Markdown(
-                    "Use `[[A|B|C]]`. Choices are selected in order instead of randomly. "
-                    "This separate syntax avoids conflicts with Dynamic Prompts `{A|B|C}`."
+                    "Use `=A | B | C=` for ordered choices. "
+                    "Use `==A | B | C==` to also sort saved images into folders "
+                    "named after the selected choice. Multiple `==...==` blocks combine "
+                    "as `A__D`. Legacy `[[A|B|C]]` remains supported."
                 )
 
                 advance_mode = gr.Radio(
@@ -100,6 +104,11 @@ class Script(scripts.Script):
         if not enabled:
             return
 
+        # Reset save-routing state once per generation so a reused processing
+        # object cannot inherit folders from a previous job.
+        p._seqprompt_folder_routing_enabled = True
+        p._seqprompt_output_folders = {}
+
         # Do not resolve prompts here. Other always-on extensions may still
         # expand/replace p.all_prompts in their own process() callback. Actual
         # resolution happens in before_process_batch(), after those callbacks.
@@ -132,3 +141,9 @@ class Script(scripts.Script):
             end_mode=end_mode,
             apply_negative=bool(apply_negative),
         )
+
+
+script_callbacks.on_before_image_saved(
+    route_image_save,
+    name="sequential-prompts-choice-folders",
+)
