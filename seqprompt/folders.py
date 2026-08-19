@@ -94,10 +94,6 @@ def _path_is_under(path: Path, root: Path) -> bool:
 
 
 def _looks_like_grid_save(p: Any, filename: Path) -> bool:
-    stem = filename.stem.lower()
-    if re.search(r"(^|[-_])grid($|[-_])", stem):
-        return True
-
     grid_root_value = getattr(p, "outpath_grids", None)
     sample_root_value = getattr(p, "outpath_samples", None)
     if not grid_root_value:
@@ -111,7 +107,11 @@ def _looks_like_grid_save(p: Any, filename: Path) -> bool:
     if sample_root is None or grid_root.resolve() != sample_root.resolve():
         return _path_is_under(filename.parent, grid_root)
 
-    return False
+    # If samples and grids intentionally share a directory, Forge normally uses
+    # the ``grid`` basename. Keep this heuristic deliberately narrow so a normal
+    # sample filename containing a word such as ``my-grid-style`` is not skipped.
+    stem = filename.stem.lower()
+    return stem == "grid" or stem.startswith("grid-") or stem.startswith("grid_")
 
 
 def route_image_save(params: Any) -> None:
@@ -149,5 +149,8 @@ def route_image_save(params: Any) -> None:
         return
 
     destination_dir = source.parent / folder
+    if not _path_is_under(destination_dir, source.parent):
+        return
+
     destination_dir.mkdir(parents=True, exist_ok=True)
     params.filename = os.fspath(destination_dir / source.name)
