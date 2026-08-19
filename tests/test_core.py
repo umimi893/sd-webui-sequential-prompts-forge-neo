@@ -94,12 +94,30 @@ class CoreTests(unittest.TestCase):
         prompt = "artist=foo|bar, weight=1"
         self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
 
+    def test_spaced_assignment_with_pipe_is_not_misparsed(self):
+        prompt = "foo = bar|baz = qux"
+        self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
+
+    def test_padding_spaces_inside_equals_delimiters_are_not_syntax(self):
+        prompt = "= A | B ="
+        self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
+
     def test_equals_block_can_follow_comma_without_space(self):
         prompt = "tag,=A|B=,tail"
         self.assertEqual(replace_sequential_blocks(prompt, 1), "tag,B,tail")
 
     def test_folder_marker_attached_to_word_is_not_misparsed(self):
         prompt = "name==A|B=="
+        resolution = resolve_sequential_blocks(prompt, 0)
+        self.assertEqual(resolution.text, prompt)
+        self.assertEqual(resolution.folder_choices, ())
+
+    def test_equals_block_closing_delimiter_attached_to_word_is_not_misparsed(self):
+        prompt = "=A|B=tail"
+        self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
+
+    def test_folder_block_closing_delimiter_attached_to_word_is_not_misparsed(self):
+        prompt = "==A|B==tail"
         resolution = resolve_sequential_blocks(prompt, 0)
         self.assertEqual(resolution.text, prompt)
         self.assertEqual(resolution.folder_choices, ())

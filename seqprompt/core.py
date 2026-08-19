@@ -70,10 +70,23 @@ def _can_start_equals_block(text: str, index: int) -> bool:
     return not (previous.isalnum() or previous == "_")
 
 
+def _can_end_equals_block(text: str, delimiter_end: int) -> bool:
+    """Require the closing delimiter to end at a prompt-token boundary."""
+    if delimiter_end >= len(text):
+        return True
+
+    following = text[delimiter_end]
+    return not (following.isalnum() or following == "_")
+
+
 def _find_closing_double_equals(text: str, start: int) -> int:
     cursor = start
     while cursor < len(text) - 1:
-        if text.startswith("==", cursor) and not _is_escaped(text, cursor):
+        if (
+            text.startswith("==", cursor)
+            and not _is_escaped(text, cursor)
+            and _can_end_equals_block(text, cursor + 2)
+        ):
             return cursor
         cursor += 1
     return -1
@@ -94,8 +107,16 @@ def _find_closing_single_equals(text: str, start: int) -> int:
             cursor += 1
             continue
 
-        return cursor
+        if _can_end_equals_block(text, cursor + 1):
+            return cursor
+
+        cursor += 1
     return -1
+
+
+def _valid_equals_body(body: str) -> bool:
+    """Keep equals syntax visually distinct from ordinary spaced assignments."""
+    return bool(body) and not body[0].isspace() and not body[-1].isspace()
 
 
 def _select_choice(body: str, sequence_index: int, end_mode: str) -> str | None:
@@ -144,7 +165,11 @@ def resolve_sequential_blocks(
             end = _find_closing_double_equals(text, index + 2)
             if end >= 0:
                 body = text[index + 2 : end]
-                selected = _select_choice(body, sequence_index, end_mode)
+                selected = (
+                    _select_choice(body, sequence_index, end_mode)
+                    if _valid_equals_body(body)
+                    else None
+                )
                 if selected is not None:
                     output.append(selected)
                     folder_choices.append(selected)
@@ -172,7 +197,11 @@ def resolve_sequential_blocks(
                 end = _find_closing_single_equals(text, index + 1)
                 if end >= 0:
                     body = text[index + 1 : end]
-                    selected = _select_choice(body, sequence_index, end_mode)
+                    selected = (
+                        _select_choice(body, sequence_index, end_mode)
+                        if _valid_equals_body(body)
+                        else None
+                    )
                     if selected is not None:
                         output.append(selected)
                         index = end + 1

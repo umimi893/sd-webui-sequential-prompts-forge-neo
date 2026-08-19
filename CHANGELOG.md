@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.2
+
+- Fixed a **high-severity save-routing issue** where Forge could compute the same numeric prefix repeatedly in the original output directory after files were redirected into choice folders. Sequential Prompts now recomputes the ascending prefix against the actual destination folder before saving.
+- Added UTF-8 byte-aware folder-name limits so long Japanese/emoji choices stay below common filesystem component limits.
+- Added the complete documented Windows reserved device-name set, including superscript COM/LPT names.
+- Replaced grid-path guessing with a Forge `image_grid` callback marker, preventing grids from being routed into the last choice folder under shared/custom save settings.
+- Clear stale Sequential Prompts generation metadata when a reused processing object later runs with the extension disabled.
+- Hardened both opening and closing `=...=` / `==...==` token boundaries and stopped accepting padding spaces immediately inside equals delimiters.
+- Expanded CI to Python 3.13 on both Ubuntu and Windows.
+- Expanded automated coverage to 68 tests.
+
 ## v0.4.1
 
 - Hardened `=...=` / `==...==` parsing so ordinary attached `key=value` text with pipes is not accidentally consumed as a sequential block.

@@ -19,11 +19,15 @@ class ScriptContractTests(unittest.TestCase):
             pass
 
         def on_before_image_saved(callback, *, name=None):
-            registrations.append((callback, name))
+            registrations.append(("before_image_saved", callback, name))
+
+        def on_image_grid(callback, *, name=None):
+            registrations.append(("image_grid", callback, name))
 
         fake_scripts.Script = FakeScript
         fake_scripts.AlwaysVisible = object()
         fake_callbacks.on_before_image_saved = on_before_image_saved
+        fake_callbacks.on_image_grid = on_image_grid
         fake_modules.scripts = fake_scripts
         fake_modules.script_callbacks = fake_callbacks
 
@@ -51,10 +55,16 @@ class ScriptContractTests(unittest.TestCase):
         self.assertIs(script.show(False), fake_scripts.AlwaysVisible)
         self.assertIs(script.show(True), fake_scripts.AlwaysVisible)
 
-    def test_save_callback_is_registered(self):
+    def test_save_callbacks_are_registered(self):
         _, _, registrations = self.load_script_module()
-        self.assertEqual(len(registrations), 1)
-        self.assertEqual(registrations[0][1], "sequential-prompts-choice-folders")
+        self.assertEqual(len(registrations), 2)
+        self.assertEqual(
+            [(kind, name) for kind, _, name in registrations],
+            [
+                ("image_grid", "sequential-prompts-grid-marker"),
+                ("before_image_saved", "sequential-prompts-choice-folders"),
+            ],
+        )
 
     def test_process_records_metadata_without_destroying_template(self):
         module, _, _ = self.load_script_module()
@@ -84,6 +94,25 @@ class ScriptContractTests(unittest.TestCase):
 
         self.assertFalse(p._seqprompt_folder_routing_enabled)
         self.assertEqual(p._seqprompt_output_folders, {})
+
+    def test_disabled_process_clears_stale_generation_metadata(self):
+        module, _, _ = self.load_script_module()
+        script = module.Script()
+        p = SimpleNamespace(
+            extra_generation_params={
+                "Sequential Prompts": "v0.4.1",
+                "Sequential advance": "batch",
+                "Sequential repeat": 9,
+                "Sequential start": 3,
+                "Sequential end": "clamp",
+                "Sequential negative": True,
+                "Other": "keep",
+            },
+        )
+
+        script.process(p, False, "image", 1, 0, "loop", True)
+
+        self.assertEqual(p.extra_generation_params, {"Other": "keep"})
 
     def test_process_records_negative_toggle_in_metadata(self):
         module, _, _ = self.load_script_module()

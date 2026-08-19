@@ -5,7 +5,11 @@ import modules.scripts as scripts
 from modules import script_callbacks
 
 from seqprompt import __version__
-from seqprompt.folders import route_image_save
+from seqprompt.folders import (
+    mark_next_grid_save,
+    reset_grid_save_marker,
+    route_image_save,
+)
 from seqprompt.integration import apply_processing_batch
 
 
@@ -101,10 +105,26 @@ class Script(scripts.Script):
         end_mode,
         apply_negative,
     ):
-        # Always reset save-routing state first. This matters if an API/client
-        # reuses a processing object and disables this extension on a later run.
+        # Always reset per-run state first. This matters if an API/client reuses
+        # a processing object and disables this extension on a later run.
         p._seqprompt_folder_routing_enabled = False
         p._seqprompt_output_folders = {}
+        reset_grid_save_marker()
+
+        params = getattr(p, "extra_generation_params", None)
+        if not isinstance(params, dict):
+            params = {}
+            p.extra_generation_params = params
+
+        for key in (
+            "Sequential Prompts",
+            "Sequential advance",
+            "Sequential repeat",
+            "Sequential start",
+            "Sequential end",
+            "Sequential negative",
+        ):
+            params.pop(key, None)
 
         if not enabled:
             return
@@ -114,12 +134,12 @@ class Script(scripts.Script):
         # Do not resolve prompts here. Other always-on extensions may still
         # expand/replace p.all_prompts in their own process() callback. Actual
         # resolution happens in before_process_batch(), after those callbacks.
-        p.extra_generation_params["Sequential Prompts"] = f"v{__version__}"
-        p.extra_generation_params["Sequential advance"] = advance_mode
-        p.extra_generation_params["Sequential repeat"] = max(int(repeat_each), 1)
-        p.extra_generation_params["Sequential start"] = max(int(start_index), 0)
-        p.extra_generation_params["Sequential end"] = end_mode
-        p.extra_generation_params["Sequential negative"] = bool(apply_negative)
+        params["Sequential Prompts"] = f"v{__version__}"
+        params["Sequential advance"] = advance_mode
+        params["Sequential repeat"] = max(int(repeat_each), 1)
+        params["Sequential start"] = max(int(start_index), 0)
+        params["Sequential end"] = end_mode
+        params["Sequential negative"] = bool(apply_negative)
 
     def before_process_batch(
         self,
@@ -145,6 +165,11 @@ class Script(scripts.Script):
             apply_negative=bool(apply_negative),
         )
 
+
+script_callbacks.on_image_grid(
+    mark_next_grid_save,
+    name="sequential-prompts-grid-marker",
+)
 
 script_callbacks.on_before_image_saved(
     route_image_save,
