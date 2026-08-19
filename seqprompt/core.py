@@ -7,19 +7,27 @@ _BLOCK_RE = re.compile(r"\[\[([^\[\]]+)\]\]")
 
 
 def split_choices(body: str) -> list[str]:
-    r"""Split ``A|B|C`` while supporting ``\|`` and ``\\`` escapes."""
+    r"""Split ``A|B|C`` while supporting ``\|`` and ``\\`` escapes.
+
+    A backslash only escapes ``|`` or another backslash. Before any other
+    character it is preserved literally so prompt text such as Windows paths
+    is not silently modified.
+    """
     choices: list[str] = []
     buffer: list[str] = []
-    escaped = False
+    index = 0
 
-    for char in body:
-        if escaped:
-            buffer.append(char)
-            escaped = False
-            continue
+    while index < len(body):
+        char = body[index]
 
         if char == "\\":
-            escaped = True
+            if index + 1 < len(body) and body[index + 1] in {"|", "\\"}:
+                buffer.append(body[index + 1])
+                index += 2
+                continue
+
+            buffer.append("\\")
+            index += 1
             continue
 
         if char == "|":
@@ -28,8 +36,7 @@ def split_choices(body: str) -> list[str]:
         else:
             buffer.append(char)
 
-    if escaped:
-        buffer.append("\\")
+        index += 1
 
     choices.append("".join(buffer).strip())
     return choices
