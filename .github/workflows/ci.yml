@@ -1,11 +1,11 @@
-name: tests
+name: CI
 
 on:
   push:
   pull_request:
 
 jobs:
-  unit-tests:
+  tests:
     strategy:
       fail-fast: false
       matrix:

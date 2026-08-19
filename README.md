@@ -1,6 +1,6 @@
 # Sequential Prompts for Forge Neo
 
-![tests](https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo/actions/workflows/tests.yml/badge.svg)
+![CI](https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo/actions/workflows/ci.yml/badge.svg)
 
 An always-on extension for **Stable Diffusion WebUI Forge Neo** that resolves inline prompt choices in a deterministic order instead of randomly.
 
@@ -231,5 +231,3 @@ git pull
 ## Compatibility
 
 Tested by GitHub Actions on **Ubuntu and Windows with Python 3.13**. The release test suite covers sequencing, batching, Hires.fix, LoRA/Extra Networks, Dynamic Prompts coexistence, save routing, numbering, Unicode/path handling, and special-mode guards.
-
-See [`AUDIT.md`](AUDIT.md) for the detailed compatibility notes.
