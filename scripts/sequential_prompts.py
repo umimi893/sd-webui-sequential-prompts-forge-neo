@@ -4,7 +4,7 @@ import gradio as gr
 import modules.scripts as scripts
 
 from seqprompt import __version__
-from seqprompt.core import expand_prompt_series
+from seqprompt.integration import apply_processing_batch
 
 
 class Script(scripts.Script):
@@ -100,43 +100,35 @@ class Script(scripts.Script):
         if not enabled:
             return
 
-        batch_size = max(int(getattr(p, "batch_size", 1)), 1)
-        repeat_each = max(int(repeat_each), 1)
-        start_index = max(int(start_index), 0)
+        # Do not resolve prompts here. Other always-on extensions may still
+        # expand/replace p.all_prompts in their own process() callback. Actual
+        # resolution happens in before_process_batch(), after those callbacks.
+        p.extra_generation_params["Sequential Prompts"] = f"v{__version__}"
+        p.extra_generation_params["Sequential advance"] = advance_mode
+        p.extra_generation_params["Sequential repeat"] = max(int(repeat_each), 1)
+        p.extra_generation_params["Sequential start"] = max(int(start_index), 0)
+        p.extra_generation_params["Sequential end"] = end_mode
 
-        all_prompts = list(getattr(p, "all_prompts", []) or [])
-        all_negative_prompts = list(
-            getattr(p, "all_negative_prompts", []) or []
-        )
+    def before_process_batch(
+        self,
+        p,
+        enabled,
+        advance_mode,
+        repeat_each,
+        start_index,
+        end_mode,
+        apply_negative,
+        **kwargs,
+    ):
+        if not enabled:
+            return
 
-        p.all_prompts = expand_prompt_series(
-            all_prompts,
-            batch_size=batch_size,
+        apply_processing_batch(
+            p,
+            batch_number=kwargs.get("batch_number", 0),
             advance_mode=advance_mode,
             repeat_each=repeat_each,
             start_index=start_index,
             end_mode=end_mode,
+            apply_negative=bool(apply_negative),
         )
-
-        if apply_negative:
-            p.all_negative_prompts = expand_prompt_series(
-                all_negative_prompts,
-                batch_size=batch_size,
-                advance_mode=advance_mode,
-                repeat_each=repeat_each,
-                start_index=start_index,
-                end_mode=end_mode,
-            )
-
-        # Forge Neo sets these from all_prompts before scripts.process().
-        # Keep them synchronized after our transformation.
-        if p.all_prompts:
-            p.main_prompt = p.all_prompts[0]
-        if p.all_negative_prompts:
-            p.main_negative_prompt = p.all_negative_prompts[0]
-
-        p.extra_generation_params["Sequential Prompts"] = f"v{__version__}"
-        p.extra_generation_params["Sequential advance"] = advance_mode
-        p.extra_generation_params["Sequential repeat"] = repeat_each
-        p.extra_generation_params["Sequential start"] = start_index
-        p.extra_generation_params["Sequential end"] = end_mode
