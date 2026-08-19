@@ -90,6 +90,20 @@ class CoreTests(unittest.TestCase):
         prompt = "cfg=5, sampler=euler"
         self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
 
+    def test_key_value_text_with_pipe_is_not_misparsed(self):
+        prompt = "artist=foo|bar, weight=1"
+        self.assertEqual(replace_sequential_blocks(prompt, 0), prompt)
+
+    def test_equals_block_can_follow_comma_without_space(self):
+        prompt = "tag,=A|B=,tail"
+        self.assertEqual(replace_sequential_blocks(prompt, 1), "tag,B,tail")
+
+    def test_folder_marker_attached_to_word_is_not_misparsed(self):
+        prompt = "name==A|B=="
+        resolution = resolve_sequential_blocks(prompt, 0)
+        self.assertEqual(resolution.text, prompt)
+        self.assertEqual(resolution.folder_choices, ())
+
     def test_per_image_batch_count_sequence(self):
         prompts = ["=A|B|C="] * 3
         self.assertEqual(
