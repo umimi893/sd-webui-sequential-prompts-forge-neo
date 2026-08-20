@@ -6,6 +6,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([resolve_sequential_blocks('$A|B|C$', i).text for i in range(4)], ['A','B','C','A'])
     def test_folder_sequence(self):
         r=resolve_sequential_blocks('$$A|B|C$$',1); self.assertEqual((r.text,r.folder_choices,r.matched_blocks),('B',('B',),1))
+    def test_single_folder_marker(self):
+        r=resolve_sequential_blocks('$$A$$',99); self.assertEqual((r.text,r.folder_choices,r.matched_blocks),('A',('A',),1))
+    def test_single_folder_marker_decodes_escapes(self):
+        r=resolve_sequential_blocks(r'$$A\|B$$',0); self.assertEqual((r.text,r.folder_choices),('A|B',('A|B',)))
+    def test_single_dollar_without_choice_is_literal(self):
+        self.assertEqual(resolve_sequential_blocks('$A$',0).text,'$A$')
     def test_multiple_blocks_share_index(self):
         self.assertEqual(resolve_sequential_blocks('$A|B$, $C|D$',1).text,'B, D')
     def test_multiple_folder_blocks(self):
@@ -32,6 +38,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(resolve_sequential_blocks('$A|B$$C|D$',1).text,'BD')
     def test_malformed_nested_fails_literal(self):
         text='$outer $A|B$|tail$'; self.assertEqual(resolve_sequential_blocks(text,1).text,text)
+    def test_malformed_nested_single_folder_fails_literal(self):
+        text='$$outer $$A$$ tail$$'; self.assertEqual(resolve_sequential_blocks(text,0).text,text)
     def test_empty_choice(self):
         self.assertEqual(resolve_sequential_blocks('$A||C$',1).text,'')
     def test_currency_is_literal(self):
