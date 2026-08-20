@@ -68,6 +68,18 @@ class ContractFlowTests(unittest.TestCase):
         self.assertEqual(result.matched_blocks, 3)
         self.assertTrue(self.clean(p, run, 0))
 
+    def test_single_folder_marker_routes_all_images_end_to_end(self):
+        p = make_p(total=3, batch_size=3, prompt="$$A$$")
+        run = self.prepare(p)
+        self.assertIsNotNone(run)
+        result = self.resolve(p, run, 0)
+        self.assertEqual(p.prompts, ["A", "A", "A"])
+        self.assertEqual(p.all_prompts, ["A", "A", "A"])
+        self.assertEqual(result.folder_choices, ((0, ("A",)), (1, ("A",)), (2, ("A",))))
+        self.assertEqual(p._seqprompt_output_folders, {0: "A", 1: "A", 2: "A"})
+        self.assertTrue(p._seqprompt_folder_routing_enabled)
+        self.assertTrue(self.clean(p, run, 0))
+
     def test_partial_second_batch_stays_in_same_frozen_identity_domain(self):
         p = make_p(total=5, batch_size=3)
         run = self.prepare(p)
