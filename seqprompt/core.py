@@ -150,7 +150,9 @@ def _simple_valid_candidate_end(text: str, index: int, delimiter_len: int) -> in
     if end is None:
         return None
     body = text[index + delimiter_len : end].strip()
-    if not body or not _body_has_choice_separator(body):
+    if not body:
+        return None
+    if delimiter_len == 1 and not _body_has_choice_separator(body):
         return None
     return end
 
@@ -203,11 +205,11 @@ def _find_closing_dollars(text: str, start: int, delimiter_len: int) -> int:
     return -1
 
 
-def _select_choice(body: str, sequence_index: int, end_mode: str) -> str | None:
-    if not _body_has_choice_separator(body):
+def _select_choice(body: str, sequence_index: int, end_mode: str, *, allow_single: bool = False) -> str | None:
+    if not allow_single and not _body_has_choice_separator(body):
         return None
     choices = split_choices(body)
-    if len(choices) < 2:
+    if not choices or (len(choices) < 2 and not allow_single):
         return None
     if end_mode == "clamp":
         choice_index = min(max(sequence_index, 0), len(choices) - 1)
@@ -219,7 +221,7 @@ def _select_choice(body: str, sequence_index: int, end_mode: str) -> str | None:
 def resolve_sequential_blocks(text: str, sequence_index: int, end_mode: str = "loop") -> PromptResolution:
     if not text or "$" not in text:
         return PromptResolution(text)
-    if "|" not in text and "\\$" not in text:
+    if "|" not in text and "\\$" not in text and "$$" not in text:
         return PromptResolution(text)
 
     output: list[str] = []
@@ -262,7 +264,7 @@ def resolve_sequential_blocks(text: str, sequence_index: int, end_mode: str = "l
                 return PromptResolution(text)
             if end >= 0:
                 body = text[index + 2 : end].strip()
-                selected = _select_choice(body, sequence_index, end_mode) if body else None
+                selected = _select_choice(body, sequence_index, end_mode, allow_single=True) if body else None
                 if selected is not None:
                     output.append(selected)
                     folder_choices.append(selected)
