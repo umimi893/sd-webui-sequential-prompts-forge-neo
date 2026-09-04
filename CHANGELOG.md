@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.6.0
+
+- Replaced `$A|B|C$` with `==A|B|C==` for normal deterministic sequencing.
+- Replaced `$$A|B|C$$` with `===A|B|C===` for sequence-driven output-folder routing.
+- `$...$` and `$$...$$` are now always literal so Sequential Prompts no longer claims syntax used by Dynamic Prompts variables and multi-selection grammar.
+- Preserved Dynamic Prompts `{...}`, `__wildcard__`, `${...}`, `%{...}`, and `$$` constructs as independent syntax.
+- Added conflict detection for users who manually configure Dynamic Prompts delimiters to overlap `==` / `===`.
+- Added real `dynamicprompts~=0.31.0` generator tests to CI on Ubuntu and Windows, covering variants, multi-select dollar syntax, variables, normal Sequential blocks, and folder blocks.
+- Added false-positive protection for comparison-like attached text such as `artist==foo|bar==weight`.
+- Added exact-run handling so malformed four-equals blocks fail closed while adjacent valid blocks continue to work.
+- Updated UI help, metadata, documentation, and version to v0.6.0.
+
 ## v0.5.1
 
 - Sequential Prompts is enabled by default. Plain prompts remain unaffected when no `$...$` or `$$...$$` syntax is present.
