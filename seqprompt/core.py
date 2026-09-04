@@ -6,6 +6,8 @@ import re
 
 
 _EXTRA_NETWORK_AT_START_RE = re.compile(r"<(\w+):([^>]+)>")
+_NORMAL_DELIMITER = "=="
+_FOLDER_DELIMITER = "==="
 
 
 def _extra_network_end(text: str, index: int) -> int | None:
@@ -13,6 +15,15 @@ def _extra_network_end(text: str, index: int) -> int | None:
         return None
     match = _EXTRA_NETWORK_AT_START_RE.match(text, index)
     return match.end() if match is not None else None
+
+
+def _is_escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    return backslashes % 2 == 1
 
 
 def _balanced_group_end(text: str, index: int, opener: str, closer: str) -> int | None:
@@ -67,7 +78,7 @@ def split_choices(body: str) -> list[str]:
             continue
         char = body[index]
         if char == "\\":
-            if index + 1 < len(body) and body[index + 1] in {"|", "$", "\\"}:
+            if index + 1 < len(body) and body[index + 1] in {"|", "=", "\\"}:
                 buffer.append(body[index + 1])
                 index += 2
                 continue
@@ -84,27 +95,22 @@ def split_choices(body: str) -> list[str]:
     return choices
 
 
-def _is_escaped(text: str, index: int) -> bool:
-    backslashes = 0
-    cursor = index - 1
-    while cursor >= 0 and text[cursor] == "\\":
-        backslashes += 1
-        cursor -= 1
-    return backslashes % 2 == 1
-
-
-def _can_start_dollar_block(text: str, index: int) -> bool:
+def _can_start_block(text: str, index: int, *, adjacent: bool = False) -> bool:
+    if _is_escaped(text, index):
+        return False
+    if adjacent:
+        return True
     if index <= 0:
         return True
     previous = text[index - 1]
-    return not (previous.isalnum() or previous == "_")
+    return not (previous.isalnum() or previous in {"_", "="})
 
 
-def _can_end_dollar_block(text: str, delimiter_end: int) -> bool:
+def _can_end_block(text: str, delimiter_end: int) -> bool:
     if delimiter_end >= len(text):
         return True
     following = text[delimiter_end]
-    return not (following.isalnum() or following == "_")
+    return not (following.isalnum() or following in {"_", "="})
 
 
 def _body_has_choice_separator(body: str) -> bool:
@@ -120,53 +126,23 @@ def _body_has_choice_separator(body: str) -> bool:
     return False
 
 
-def _find_simple_close(text: str, start: int, delimiter_len: int) -> int | None:
-    cursor = start
-    while cursor < len(text):
-        atomic_end = _atomic_span_end(text, cursor)
-        if atomic_end is not None:
-            cursor = atomic_end
-            continue
-        if _is_escaped(text, cursor):
-            cursor += 1
-            continue
-        if delimiter_len == 2:
-            if text.startswith("$$", cursor) and _can_end_dollar_block(text, cursor + 2):
-                return cursor
-        elif text[cursor] == "$" and _can_end_dollar_block(text, cursor + 1):
-            return cursor
-        cursor += 1
+def _equals_run_length(text: str, index: int) -> int:
+    end = index
+    while end < len(text) and text[end] == "=":
+        end += 1
+    return end - index
+
+
+def _delimiter_at(text: str, index: int) -> tuple[str, bool] | None:
+    run = _equals_run_length(text, index)
+    if run == 3:
+        return _FOLDER_DELIMITER, True
+    if run == 2:
+        return _NORMAL_DELIMITER, False
     return None
 
 
-def _simple_valid_candidate_end(text: str, index: int, delimiter_len: int) -> int | None:
-    if _is_escaped(text, index) or not _can_start_dollar_block(text, index):
-        return None
-    if delimiter_len == 2 and not text.startswith("$$", index):
-        return None
-    if delimiter_len == 1 and text[index] != "$":
-        return None
-    end = _find_simple_close(text, index + delimiter_len, delimiter_len)
-    if end is None:
-        return None
-    body = text[index + delimiter_len : end].strip()
-    if not body:
-        return None
-    if delimiter_len == 1 and not _body_has_choice_separator(body):
-        return None
-    return end
-
-
-def _nested_candidate_makes_outer_ambiguous(text: str, nested_index: int, outer_delimiter_len: int) -> bool:
-    nested_len = 2 if text.startswith("$$", nested_index) else 1
-    nested_end = _simple_valid_candidate_end(text, nested_index, nested_len)
-    if nested_end is None:
-        return False
-    outer_close = _find_simple_close(text, nested_end + nested_len, outer_delimiter_len)
-    return outer_close is not None
-
-
-def _find_closing_dollars(text: str, start: int, delimiter_len: int) -> int:
+def _find_closing_equals(text: str, start: int, delimiter: str) -> int:
     cursor = start
     while cursor < len(text):
         atomic_end = _atomic_span_end(text, cursor)
@@ -176,36 +152,32 @@ def _find_closing_dollars(text: str, start: int, delimiter_len: int) -> int:
         if _is_escaped(text, cursor):
             cursor += 1
             continue
-        if delimiter_len == 2:
-            if text.startswith("$$", cursor):
-                if _can_end_dollar_block(text, cursor + 2):
-                    return cursor
-                if _can_start_dollar_block(text, cursor):
-                    if _nested_candidate_makes_outer_ambiguous(text, cursor, delimiter_len):
-                        return -2
-                    return -1
-                cursor += 2
-                continue
-            if text[cursor] == "$" and _can_start_dollar_block(text, cursor):
-                if _nested_candidate_makes_outer_ambiguous(text, cursor, delimiter_len):
-                    return -2
-                return -1
-            cursor += 1
-            continue
-        if text[cursor] != "$":
-            cursor += 1
-            continue
-        if _can_end_dollar_block(text, cursor + 1):
-            return cursor
-        if _can_start_dollar_block(text, cursor):
-            if _nested_candidate_makes_outer_ambiguous(text, cursor, delimiter_len):
-                return -2
-            return -1
+
+        if text[cursor] == "=":
+            run = _equals_run_length(text, cursor)
+            end = cursor + len(delimiter)
+            if run == len(delimiter) and _can_end_block(text, end):
+                return cursor
+            # Adjacent blocks share one uninterrupted equals run, e.g.
+            # ==A|B====C|D== (close == followed immediately by open ==).
+            if run >= len(delimiter) + len(_NORMAL_DELIMITER):
+                return cursor
+
+        nested = _delimiter_at(text, cursor)
+        if nested is not None and _can_start_block(text, cursor):
+            return -2
+
         cursor += 1
     return -1
 
 
-def _select_choice(body: str, sequence_index: int, end_mode: str, *, allow_single: bool = False) -> str | None:
+def _select_choice(
+    body: str,
+    sequence_index: int,
+    end_mode: str,
+    *,
+    allow_single: bool = False,
+) -> str | None:
     if not allow_single and not _body_has_choice_separator(body):
         return None
     choices = split_choices(body)
@@ -218,10 +190,12 @@ def _select_choice(body: str, sequence_index: int, end_mode: str, *, allow_singl
     return choices[choice_index]
 
 
-def resolve_sequential_blocks(text: str, sequence_index: int, end_mode: str = "loop") -> PromptResolution:
-    if not text or "$" not in text:
-        return PromptResolution(text)
-    if "|" not in text and "\\$" not in text and "$$" not in text:
+def resolve_sequential_blocks(
+    text: str,
+    sequence_index: int,
+    end_mode: str = "loop",
+) -> PromptResolution:
+    if not text or "==" not in text:
         return PromptResolution(text)
 
     output: list[str] = []
@@ -242,7 +216,11 @@ def resolve_sequential_blocks(text: str, sequence_index: int, end_mode: str = "l
             closer = "]" if text[index] == "[" else ")"
             group_end = _balanced_group_end(text, index, text[index], closer)
             if group_end is not None:
-                inner = resolve_sequential_blocks(text[index + 1 : group_end - 1], sequence_index, end_mode)
+                inner = resolve_sequential_blocks(
+                    text[index + 1 : group_end - 1],
+                    sequence_index,
+                    end_mode,
+                )
                 output.append(text[index] + inner.text + closer)
                 folder_choices.extend(inner.folder_choices)
                 matched_blocks += inner.matched_blocks
@@ -258,48 +236,43 @@ def resolve_sequential_blocks(text: str, sequence_index: int, end_mode: str = "l
                 adjacent_after_resolved_block = False
                 continue
 
-        if text.startswith("$$", index) and not _is_escaped(text, index) and _can_start_dollar_block(text, index):
-            end = _find_closing_dollars(text, index + 2, 2)
+        candidate = _delimiter_at(text, index)
+        if candidate is not None and _can_start_block(
+            text,
+            index,
+            adjacent=adjacent_after_resolved_block,
+        ):
+            delimiter, is_folder = candidate
+            end = _find_closing_equals(text, index + len(delimiter), delimiter)
             if end == -2:
                 return PromptResolution(text)
             if end >= 0:
-                body = text[index + 2 : end].strip()
-                selected = _select_choice(body, sequence_index, end_mode, allow_single=True) if body else None
+                body = text[index + len(delimiter) : end].strip()
+                selected = (
+                    _select_choice(
+                        body,
+                        sequence_index,
+                        end_mode,
+                        allow_single=is_folder,
+                    )
+                    if body
+                    else None
+                )
                 if selected is not None:
                     output.append(selected)
-                    folder_choices.append(selected)
+                    if is_folder:
+                        folder_choices.append(selected)
                     matched_blocks += 1
-                    index = end + 2
+                    index = end + len(delimiter)
                     adjacent_after_resolved_block = True
                     continue
-                output.append(text[index : end + 2])
-                index = end + 2
+                output.append(text[index : end + len(delimiter)])
+                index = end + len(delimiter)
                 adjacent_after_resolved_block = False
                 continue
 
-        if text[index] == "$" and not _is_escaped(text, index) and (adjacent_after_resolved_block or _can_start_dollar_block(text, index)):
-            is_double = index + 1 < len(text) and text[index + 1] == "$"
-            follows_unconsumed_dollar = index > 0 and text[index - 1] == "$" and not adjacent_after_resolved_block
-            if not is_double and not follows_unconsumed_dollar:
-                end = _find_closing_dollars(text, index + 1, 1)
-                if end == -2:
-                    return PromptResolution(text)
-                if end >= 0:
-                    body = text[index + 1 : end].strip()
-                    selected = _select_choice(body, sequence_index, end_mode) if body else None
-                    if selected is not None:
-                        output.append(selected)
-                        matched_blocks += 1
-                        index = end + 1
-                        adjacent_after_resolved_block = True
-                        continue
-                    output.append(text[index : end + 1])
-                    index = end + 1
-                    adjacent_after_resolved_block = False
-                    continue
-
-        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "$":
-            output.append("$")
+        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "=":
+            output.append("=")
             index += 2
             adjacent_after_resolved_block = False
             continue
@@ -315,7 +288,13 @@ def replace_sequential_blocks(text: str, sequence_index: int, end_mode: str = "l
     return resolve_sequential_blocks(text, sequence_index, end_mode).text
 
 
-def sequence_index_for_image(image_index: int, batch_size: int, advance_mode: str, repeat_each: int, start_index: int) -> int:
+def sequence_index_for_image(
+    image_index: int,
+    batch_size: int,
+    advance_mode: str,
+    repeat_each: int,
+    start_index: int,
+) -> int:
     batch_size = max(int(batch_size), 1)
     repeat_each = max(int(repeat_each), 1)
     start_index = max(int(start_index), 0)
@@ -326,9 +305,23 @@ def sequence_index_for_image(image_index: int, batch_size: int, advance_mode: st
     return start_index + unit_index // repeat_each
 
 
-def expand_prompt_series(prompts: Iterable[str], *, batch_size: int, advance_mode: str, repeat_each: int = 1, start_index: int = 0, end_mode: str = "loop") -> list[str]:
+def expand_prompt_series(
+    prompts: Iterable[str],
+    *,
+    batch_size: int,
+    advance_mode: str,
+    repeat_each: int = 1,
+    start_index: int = 0,
+    end_mode: str = "loop",
+) -> list[str]:
     output: list[str] = []
     for image_index, prompt in enumerate(prompts):
-        sequence_index = sequence_index_for_image(image_index, batch_size, advance_mode, repeat_each, start_index)
+        sequence_index = sequence_index_for_image(
+            image_index,
+            batch_size,
+            advance_mode,
+            repeat_each,
+            start_index,
+        )
         output.append(replace_sequential_blocks(prompt, sequence_index, end_mode))
     return output
