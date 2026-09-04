@@ -74,7 +74,7 @@ class ScriptContractTests(unittest.TestCase):
             spec.loader.exec_module(module)
         return module, scripts_mod, registrations, removed
 
-    def make_p(self, prompt="$$A|B|C$$, $D|E|F$", total=3, batch_size=3):
+    def make_p(self, prompt="===A|B|C===, ==D|E|F==", total=3, batch_size=3):
         def init(*args, **kwargs):
             return None
 
@@ -209,37 +209,46 @@ class ScriptContractTests(unittest.TestCase):
 
     def test_late_unresolved_syntax_is_hard_stopped_at_core_preparse(self):
         module, _, _, _ = self.load_script_module()
-        p = self.make_p(prompt="$A|B$", total=1, batch_size=1)
+        p = self.make_p(prompt="==A|B==", total=1, batch_size=1)
         script = self.activate(module, p)
         self.slice_batch(p)
         script.before_process_batch(p, True, "image", 1, 0, "loop", True, batch_number=0)
-        p.prompts[0] = "$late1|late2$"
+        p.prompts[0] = "==late1|late2=="
         with self.assertRaisesRegex(Exception, "unresolved Sequential"):
             p.parse_extra_network_prompts()
 
     def test_multiframe_wan_is_rejected_after_final_init_state(self):
         module, _, _, _ = self.load_script_module(wan=True, model_is_wan=True)
-        p = self.make_p(prompt="$A|B$", total=5, batch_size=5)
+        p = self.make_p(prompt="==A|B==", total=5, batch_size=5)
         script = module.Script()
         script.setup(p)
         script.process(p, True, "image", 1, 0, "loop", True)
         with self.assertRaisesRegex(Exception, "multi-frame Wan"):
             p.init(p.all_prompts, p.all_seeds, p.all_subseeds)
 
-    def test_hires_raw_witness_participates_in_dynamic_prompts_dollar_conflict(self):
+    def test_default_dynamic_prompts_delimiters_are_allowed(self):
+        module, _, _, _ = self.load_script_module()
+        p = self.make_p(prompt="==A|B==", total=1, batch_size=1)
+        dp = SimpleNamespace(args_from=1, title=lambda: "Dynamic Prompts")
+        p.scripts.alwayson_scripts = [dp]
+        p.script_args = [0, True]
+        script = module.Script()
+        script.setup(p)
+        script.process(p, True, "image", 1, 0, "loop", True)
+        p.init(p.all_prompts, p.all_seeds, p.all_subseeds)
+        self.assertIsNotNone(p._seqprompt_active_run)
+
+    def test_hr_raw_witness_participates_in_dynamic_prompts_custom_delimiter_conflict(self):
         module, _, _, _ = self.load_script_module(
-            dp_opts={"dp_parser_variant_start": "$", "dp_parser_variant_end": "$"}
+            dp_opts={"dp_parser_variant_start": "==", "dp_parser_variant_end": "=="}
         )
         p = self.make_p(prompt="plain", total=1, batch_size=1)
         p.enable_hr = True
-        p.hr_prompt = "$H1|H2$"
+        p.hr_prompt = "==H1|H2=="
         p.hr_negative_prompt = ""
         p.all_hr_prompts = [p.hr_prompt]
         p.all_hr_negative_prompts = ["neg"]
-        dp = SimpleNamespace(
-            args_from=1,
-            title=lambda: "Dynamic Prompts",
-        )
+        dp = SimpleNamespace(args_from=1, title=lambda: "Dynamic Prompts")
         p.scripts.alwayson_scripts = [dp]
         p.script_args = [0, True]
         script = module.Script()
@@ -250,7 +259,7 @@ class ScriptContractTests(unittest.TestCase):
 
     def test_postprocess_clears_routing_state(self):
         module, _, _, _ = self.load_script_module()
-        p = self.make_p(total=1, batch_size=1, prompt="$$A|B$$")
+        p = self.make_p(total=1, batch_size=1, prompt="===A|B===")
         script = self.activate(module, p)
         self.slice_batch(p)
         script.before_process_batch(p, True, "image", 1, 0, "loop", True, batch_number=0)
