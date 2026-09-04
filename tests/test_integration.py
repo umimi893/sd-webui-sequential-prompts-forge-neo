@@ -9,7 +9,7 @@ from seqprompt.integration import prepare_after_init, preparse_is_clean, resolve
 KNOWN = {"lora": "lora", "lyco": "lora"}
 
 
-def make_p(*, total=3, batch_size=3, prompt="$A|B|C$", negative="neg", enable_hr=False, hr=None, hr_neg=None):
+def make_p(*, total=3, batch_size=3, prompt="==A|B|C==", negative="neg", enable_hr=False, hr=None, hr_neg=None):
     all_prompts = [prompt] * total
     all_negatives = [negative] * total
     return SimpleNamespace(
@@ -69,7 +69,7 @@ class ContractFlowTests(unittest.TestCase):
         self.assertTrue(self.clean(p, run, 0))
 
     def test_single_folder_marker_routes_all_images_end_to_end(self):
-        p = make_p(total=3, batch_size=3, prompt="$$A$$")
+        p = make_p(total=3, batch_size=3, prompt="===A===")
         run = self.prepare(p)
         self.assertIsNotNone(run)
         result = self.resolve(p, run, 0)
@@ -89,7 +89,7 @@ class ContractFlowTests(unittest.TestCase):
         self.assertTrue(self.clean(p, run, 1))
 
     def test_hr_only_sequence_can_use_readonly_plain_positive_identity_array(self):
-        p = make_p(total=1, batch_size=1, prompt="plain", enable_hr=True, hr=["$H1|H2$"], hr_neg=["plain"])
+        p = make_p(total=1, batch_size=1, prompt="plain", enable_hr=True, hr=["==H1|H2=="], hr_neg=["plain"])
         p.all_prompts = tuple(p.all_prompts)
         run = self.prepare(p)
         self.assertIsNotNone(run)
@@ -106,13 +106,13 @@ class ContractFlowTests(unittest.TestCase):
         self.assertFalse(hasattr(p, "_seqprompt_frozen_layout"))
 
     def test_unsafe_per_image_lora_is_rejected_during_post_init_preflight(self):
-        p = make_p(total=2, batch_size=2, prompt="$<lora:a:1>|<lora:b:1>$")
+        p = make_p(total=2, batch_size=2, prompt="==<lora:a:1>|<lora:b:1>==")
         with self.assertRaisesRegex(BatchIntegrationError, "prompt batch 1"):
             self.prepare(p)
 
     def test_per_batch_lora_is_allowed_and_resolved_consistently(self):
         config = SequenceConfig(advance_mode="batch")
-        p = make_p(total=3, batch_size=3, prompt="$$<lora:a:1>|<lora:b:1>$$")
+        p = make_p(total=3, batch_size=3, prompt="===<lora:a:1>|<lora:b:1>===")
         run = self.prepare(p, config)
         result = self.resolve(p, run, 0, config)
         self.assertEqual(p.prompts, ["<lora:a:1>"] * 3)
@@ -120,27 +120,37 @@ class ContractFlowTests(unittest.TestCase):
         self.assertTrue(self.clean(p, run, 0, config))
 
     def test_future_hr_sequence_does_not_trip_current_preparse_sentinel(self):
-        p = make_p(total=2, batch_size=1, prompt="plain", enable_hr=True, hr=["$H1|H2$", "$H1|H2$"], hr_neg=["plain", "plain"])
+        p = make_p(total=2, batch_size=1, prompt="plain", enable_hr=True, hr=["==H1|H2==", "==H1|H2=="], hr_neg=["plain", "plain"])
         run = self.prepare(p)
         self.resolve(p, run, 0)
-        self.assertEqual(p.all_hr_prompts[1], "$H1|H2$")
+        self.assertEqual(p.all_hr_prompts[1], "==H1|H2==")
         self.assertTrue(self.clean(p, run, 0))
 
     def test_late_callback_reintroducing_sequence_is_fail_closed_by_sentinel(self):
         p = make_p(total=1, batch_size=1)
         run = self.prepare(p)
         self.resolve(p, run, 0)
-        p.prompts[0] = "$late1|late2$"
+        p.prompts[0] = "==late1|late2=="
         self.assertFalse(self.clean(p, run, 0))
 
     def test_negative_toggle_off_keeps_negative_literal_through_full_flow(self):
         config = SequenceConfig(apply_negative=False)
-        p = make_p(total=1, batch_size=1, prompt="$A|B$", negative="$N1|N2$")
+        p = make_p(total=1, batch_size=1, prompt="==A|B==", negative="==N1|N2==")
         run = self.prepare(p, config)
         self.resolve(p, run, 0, config)
         self.assertEqual(p.prompts, ["A"])
-        self.assertEqual(p.negative_prompts, ["$N1|N2$"])
+        self.assertEqual(p.negative_prompts, ["==N1|N2=="])
         self.assertTrue(self.clean(p, run, 0, config))
+
+    def test_dynamic_prompts_expanded_array_then_sequential_resolves(self):
+        p = make_p(total=2, batch_size=2, prompt="plain")
+        # Simulates Dynamic Prompts finishing its process() callback first.
+        p.all_prompts = ["red, ==front|back==", "blue, ==front|back=="]
+        p.main_prompt = p.all_prompts[0]
+        run = self.prepare(p)
+        self.assertIsNotNone(run)
+        self.resolve(p, run, 0)
+        self.assertEqual(p.prompts, ["red, front", "blue, back"])
 
 
 if __name__ == "__main__":
