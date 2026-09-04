@@ -7,7 +7,7 @@ from modules import extra_networks, script_callbacks, shared
 
 from seqprompt import __version__
 from seqprompt.activation import (
-    dynamic_prompts_status_conflicts_with_dollar,
+    dynamic_prompts_status_conflicts_with_sequential,
     dynamic_prompts_status_from_runner,
 )
 from seqprompt.batch_integration import BatchIntegrationError, SequenceConfig
@@ -37,7 +37,6 @@ def _has_sequence_text(value) -> bool:
     if not isinstance(value, str):
         return False
     return resolve_sequential_blocks(value, 0).matched_blocks > 0
-
 
 
 def _selected_script_info(p):
@@ -80,7 +79,7 @@ def _known_extra_networks() -> dict[str, str]:
 def _dynamic_prompts_conflict(p, *, raw_witness: bool) -> bool:
     status = dynamic_prompts_status_from_runner(p)
     opts = shared.opts
-    return dynamic_prompts_status_conflicts_with_dollar(
+    return dynamic_prompts_status_conflicts_with_sequential(
         status,
         raw_relevant_had_sequence=raw_witness,
         variant_start=str(getattr(opts, "dp_parser_variant_start", "{")),
@@ -118,10 +117,12 @@ class Script(scripts.Script):
                     elem_id=self.elem_id("enabled"),
                 )
                 gr.Markdown(
-                    "Use `$A | B | C$` for ordered choices. "
-                    "Use `$$A | B | C$$` to also sort saved images into folders "
-                    "named after the selected choice. Multiple `$$...$$` blocks combine "
-                    "as `A__D`. **Default behavior** is batch-friendly: with Batch size 3, "
+                    "Use `==A | B | C==` for ordered choices. "
+                    "Use `===A | B | C===` to also sort saved images into folders "
+                    "named after the selected choice. Multiple `===...===` blocks combine "
+                    "as `A__D`. These delimiters are designed to coexist with Dynamic Prompts' "
+                    "default `{...}`, `__wildcard__`, `${...}`, and `%{...}` syntax. "
+                    "**Default behavior** is batch-friendly: with Batch size 3, "
                     "the recommended mode gives `AAA → BBB → CCC`."
                 )
                 advance_mode = gr.Radio(
@@ -210,8 +211,8 @@ class Script(scripts.Script):
         )
         if _dynamic_prompts_conflict(p, raw_witness=raw_relevant):
             selected_reason = (
-                "Dynamic Prompts is configured to use $/$$ delimiters that conflict "
-                "with Sequential Prompts"
+                "Dynamic Prompts is configured with a custom delimiter that overlaps "
+                "Sequential Prompts ==/=== syntax"
             )
 
         known_networks = _known_extra_networks()
