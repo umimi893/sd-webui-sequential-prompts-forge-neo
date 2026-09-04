@@ -195,8 +195,14 @@ def begin_run_state(p: Any) -> bool:
 
 
 def block_current_batch(p: Any, reason: str) -> None:
+    """Mark the batch for rejection by the out-of-callback core preparse guard.
+
+    Do not empty ``p.prompts`` here. Forge Neo checks ``len(p.prompts)`` immediately
+    after always-on ``before_process_batch`` callbacks and silently breaks the loop
+    when it is zero. Keeping the batch intact guarantees that the guarded
+    ``parse_extra_network_prompts()`` call is reached and raises the real reason.
+    """
     p._seqprompt_blocked_reason = str(reason)
-    p.prompts = []
 
 
 def save_global_index(p: Any) -> int:
