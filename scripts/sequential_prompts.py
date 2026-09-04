@@ -10,7 +10,7 @@ from seqprompt.activation import (
     dynamic_prompts_status_conflicts_with_sequential,
     dynamic_prompts_status_from_runner,
 )
-from seqprompt.batch_integration import BatchIntegrationError, SequenceConfig
+from seqprompt.batch_integration import SequenceConfig
 from seqprompt.core import resolve_sequential_blocks
 from seqprompt.folders import route_image_save
 from seqprompt.integration import (
@@ -62,7 +62,7 @@ def _selected_script_info(p):
     matrix_type = None
     if str(title or "").strip().casefold() == "prompt matrix":
         start = getattr(script, "args_from", None)
-        if isinstance(start, int) and start + 2 < len(args_values):
+        if isinstance(start, int) and not isinstance(start, bool) and start + 2 < len(args_values):
             matrix_type = str(args_values[start + 2])
     return title, matrix_type
 
@@ -86,6 +86,76 @@ def _dynamic_prompts_conflict(p, *, raw_witness: bool) -> bool:
         variant_end=str(getattr(opts, "dp_parser_variant_end", "}")),
         wildcard_wrap=str(getattr(opts, "dp_parser_wildcard_wrap", "__")),
     )
+
+
+def _integer_setting(value, *, label: str, minimum: int) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be an integer")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"{label} must be an integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{label} must be an integer") from exc
+    if result < minimum:
+        raise ValueError(f"{label} must be >= {minimum}")
+    return result
+
+
+def _boolean_setting(value, *, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1}:
+        return bool(value)
+    raise ValueError(f"{label} must be true or false")
+
+
+def _validated_config(
+    advance_mode,
+    repeat_each,
+    start_index,
+    end_mode,
+    apply_negative,
+) -> tuple[SequenceConfig, str | None]:
+    errors: list[str] = []
+
+    advance = str(advance_mode).strip().casefold()
+    if advance not in {"batch", "image"}:
+        errors.append("Sequence grouping must be 'batch' or 'image'")
+        advance = "batch"
+
+    ending = str(end_mode).strip().casefold()
+    if ending not in {"loop", "clamp"}:
+        errors.append("After the last choice must be 'loop' or 'clamp'")
+        ending = "loop"
+
+    try:
+        repeat = _integer_setting(repeat_each, label="Hold each choice", minimum=1)
+    except ValueError as exc:
+        errors.append(str(exc))
+        repeat = 1
+
+    try:
+        start = _integer_setting(start_index, label="Start index", minimum=0)
+    except ValueError as exc:
+        errors.append(str(exc))
+        start = 0
+
+    try:
+        negative = _boolean_setting(apply_negative, label="Negative prompt processing")
+    except ValueError as exc:
+        errors.append(str(exc))
+        negative = True
+
+    config = SequenceConfig(
+        advance_mode=advance,
+        repeat_each=repeat,
+        start_index=start,
+        end_mode=ending,
+        apply_negative=negative,
+    )
+    reason = "; ".join(errors) if errors else None
+    return config, reason
 
 
 class Script(scripts.Script):
@@ -117,13 +187,12 @@ class Script(scripts.Script):
                     elem_id=self.elem_id("enabled"),
                 )
                 gr.Markdown(
-                    "Use `==A | B | C==` for ordered choices. "
-                    "Use `===A | B | C===` to also sort saved images into folders "
-                    "named after the selected choice. Multiple `===...===` blocks combine "
-                    "as `A__D`. These delimiters are designed to coexist with Dynamic Prompts' "
-                    "default `{...}`, `__wildcard__`, `${...}`, and `%{...}` syntax. "
-                    "**Default behavior** is batch-friendly: with Batch size 3, "
-                    "the recommended mode gives `AAA → BBB → CCC`."
+                    "`==A | B | C==` walks choices in order. "
+                    "`===A | B | C===` does the same and routes final saved images into "
+                    "folders named after the selected choice. Multiple folder blocks combine "
+                    "as `A__D`. The syntax is intentionally separate from Dynamic Prompts' "
+                    "default `{...}`, `__wildcard__`, `${...}`, `%{...}`, and `$$` grammar. "
+                    "The default grouping is one choice per batch (`AAA → BBB → CCC`)."
                 )
                 advance_mode = gr.Radio(
                     choices=[
@@ -141,10 +210,8 @@ class Script(scripts.Script):
                     value=1,
                     label="Hold each choice for N images / batches",
                     info=(
-                        "Batch mode: how many batches to keep the same choice. "
-                        "Image mode: how many images to keep the same choice. "
-                        "Example: 3 gives AAA BBB CCC. 150 means finish 150 images or "
-                        "150 batches before moving to the next choice."
+                        "Batch mode: keep a choice for N whole batches. "
+                        "Image mode: keep a choice for N images."
                     ),
                     elem_id=self.elem_id("repeat-each"),
                 )
@@ -180,12 +247,12 @@ class Script(scripts.Script):
         if not enabled:
             return
 
-        config = SequenceConfig(
-            advance_mode=str(advance_mode),
-            repeat_each=max(int(repeat_each), 1),
-            start_index=max(int(start_index), 0),
-            end_mode=str(end_mode),
-            apply_negative=bool(apply_negative),
+        config, config_error = _validated_config(
+            advance_mode,
+            repeat_each,
+            start_index,
+            end_mode,
+            apply_negative,
         )
         p._seqprompt_config = config
 
@@ -202,6 +269,7 @@ class Script(scripts.Script):
         )
         selected_title = getattr(p, "_seqprompt_selected_script_title", None)
         matrix_type = getattr(p, "_seqprompt_prompt_matrix_type", None)
+        abort_reasons: list[str] = []
         selected_reason = selected_script_conflict(
             selected_title,
             raw_positive_had_sequence=raw_positive,
@@ -209,8 +277,10 @@ class Script(scripts.Script):
             current_has_sequence=False,
             prompt_matrix_type=matrix_type,
         )
+        if selected_reason:
+            abort_reasons.append(selected_reason)
         if _dynamic_prompts_conflict(p, raw_witness=raw_relevant):
-            selected_reason = (
+            abort_reasons.append(
                 "Dynamic Prompts is configured with a custom delimiter that overlaps "
                 "Sequential Prompts ==/=== syntax"
             )
@@ -221,6 +291,8 @@ class Script(scripts.Script):
             run = prepare_after_init(processing, config=config, known_networks=known_networks)
             if run is None:
                 return
+            if config_error:
+                raise LifecycleInvariantError(f"Invalid Sequential Prompts settings: {config_error}")
 
             # SD Upscale can become relevant only after styles/another process callback
             # introduced Sequential syntax. Prompt Matrix's structural conflict is raw-only.
@@ -254,7 +326,11 @@ class Script(scripts.Script):
                 params["Sequential end"] = config.end_mode
                 params["Sequential negative"] = config.apply_negative
 
-        install_init_gate(p, abort_reason=selected_reason, after_init=after_init)
+        install_init_gate(
+            p,
+            abort_reason="; ".join(abort_reasons) if abort_reasons else None,
+            after_init=after_init,
+        )
 
     def before_process_batch(self, p, enabled, advance_mode, repeat_each, start_index, end_mode, apply_negative, **kwargs):
         if not enabled:
@@ -270,10 +346,23 @@ class Script(scripts.Script):
                 run=run,
                 known_networks=_known_extra_networks(),
             )
-        except (BatchIntegrationError, LifecycleInvariantError) as exc:
-            block_current_batch(p, str(exc))
-        finally:
+        except Exception as exc:
+            # Forge catches exceptions from always-on before_process_batch callbacks.
+            # Record the failure and let the out-of-callback parser guard raise it.
+            block_current_batch(p, f"Sequential Prompts batch resolution failed: {exc}")
+
+        try:
             install_preparse_sentinel(p, batch_number=batch_number, run=run)
+        except Exception as exc:
+            # If the core guard itself cannot be installed, there is no safe way to
+            # continue with an active sequence. Emptying the live batch is a last-resort
+            # stop here, and re-raising also makes Forge log the contract failure.
+            block_current_batch(p, f"Sequential Prompts could not install its core safety guard: {exc}")
+            try:
+                p.prompts = []
+            except Exception:
+                pass
+            raise
 
     def postprocess(self, p, processed, enabled, advance_mode, repeat_each, start_index, end_mode, apply_negative):
         restore_lifecycle_overrides(p)
