@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 
+SEQUENTIAL_DELIMITERS = ("==", "===")
+
+
 @dataclass(frozen=True)
 class SourcePresence:
     name: str
@@ -96,7 +99,16 @@ def active_sources_are_mutable(scan: ActivationScan) -> bool:
     return all(source.mutable for source in scan.active_sources)
 
 
-def dynamic_prompts_dollar_conflict(
+def _delimiters_overlap(first: str, second: str) -> bool:
+    """Return True if either delimiter can be consumed as the prefix of the other."""
+    first = str(first)
+    second = str(second)
+    if not first or not second:
+        return False
+    return first.startswith(second) or second.startswith(first)
+
+
+def dynamic_prompts_delimiter_conflict(
     *,
     dp_enabled: bool,
     raw_relevant_had_sequence: bool,
@@ -104,11 +116,15 @@ def dynamic_prompts_dollar_conflict(
     variant_end: str,
     wildcard_wrap: str,
 ) -> bool:
-    """Return True when enabled Dynamic Prompts claims our exact $/$$ delimiters."""
+    """Detect custom Dynamic Prompts delimiters that overlap == / === syntax."""
     if not dp_enabled or not raw_relevant_had_sequence:
         return False
-    claimed = {str(variant_start), str(variant_end), str(wildcard_wrap)}
-    return bool(claimed.intersection({"$", "$$"}))
+    claimed = (str(variant_start), str(variant_end), str(wildcard_wrap))
+    return any(
+        _delimiters_overlap(dp_delimiter, seq_delimiter)
+        for dp_delimiter in claimed
+        for seq_delimiter in SEQUENTIAL_DELIMITERS
+    )
 
 
 def relevant_raw_sequence_witness(
@@ -198,7 +214,7 @@ def dynamic_prompts_status_from_runner(p: Any) -> DynamicPromptsStatus:
     return DynamicPromptsStatus(present=False, enabled=None)
 
 
-def dynamic_prompts_status_conflicts_with_dollar(
+def dynamic_prompts_status_conflicts_with_sequential(
     status: DynamicPromptsStatus,
     *,
     raw_relevant_had_sequence: bool,
@@ -206,11 +222,27 @@ def dynamic_prompts_status_conflicts_with_dollar(
     variant_end: str,
     wildcard_wrap: str,
 ) -> bool:
-    """Fail conservatively if present DP may own our exact delimiters."""
+    """Fail closed only when an enabled/potentially enabled DP claims == / ===."""
     if not status.present or status.enabled is False or not raw_relevant_had_sequence:
         return False
-    claimed = {str(variant_start), str(variant_end), str(wildcard_wrap)}
-    return bool(claimed.intersection({"$", "$$"}))
+    claimed = (str(variant_start), str(variant_end), str(wildcard_wrap))
+    return any(
+        _delimiters_overlap(dp_delimiter, seq_delimiter)
+        for dp_delimiter in claimed
+        for seq_delimiter in SEQUENTIAL_DELIMITERS
+    )
+
+
+# Compatibility aliases for callers that imported the v0.5 helper names.
+def dynamic_prompts_dollar_conflict(**kwargs: Any) -> bool:
+    return dynamic_prompts_delimiter_conflict(**kwargs)
+
+
+def dynamic_prompts_status_conflicts_with_dollar(
+    status: DynamicPromptsStatus,
+    **kwargs: Any,
+) -> bool:
+    return dynamic_prompts_status_conflicts_with_sequential(status, **kwargs)
 
 
 def unresolved_relevant_sequence_present(
