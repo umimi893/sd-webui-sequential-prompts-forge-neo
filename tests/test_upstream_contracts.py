@@ -60,7 +60,7 @@ class ForgeNeoUpstreamContractTests(unittest.TestCase):
     def test_core_save_sets_batch_index_before_direct_save(self):
         processing = _read(FORGE_ROOT, "modules/processing.py")
         start = processing.index("for i, x_sample in enumerate(x_samples_ddim):")
-        end = processing.index("if _is_video:", start)
+        end = processing.index("            del x_samples_ddim", start)
         save_loop = processing[start:end]
         _assert_in_order(
             self,
