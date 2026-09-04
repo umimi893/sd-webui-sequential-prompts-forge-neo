@@ -167,14 +167,19 @@ def _find_closing_equals(text: str, start: int, delimiter: str) -> int:
             if run == len(delimiter) and _can_end_block(text, end):
                 return cursor
             # Adjacent blocks share one uninterrupted equals run. Accept only
-            # close+normal-open or close+folder-open exactly; longer runs are
-            # malformed and must not be partially consumed.
+            # close+normal-open or close+folder-open exactly.
             if _valid_adjacent_close_run(delimiter, run):
                 return cursor
 
-        nested = _delimiter_at(text, cursor)
-        if nested is not None and _can_start_block(text, cursor):
-            return -2
+            nested = _delimiter_at(text, cursor)
+            if nested is not None and _can_start_block(text, cursor):
+                return -2
+
+            # Treat one physical run as one token. Without this skip, a malformed
+            # run such as six '=' characters could be reinterpreted from its second
+            # character as a valid five-character close+open run.
+            cursor += max(run, 1)
+            continue
 
         cursor += 1
     return -1
