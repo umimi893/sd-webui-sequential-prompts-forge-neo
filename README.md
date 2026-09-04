@@ -2,47 +2,198 @@
 
 ![CI](https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo/actions/workflows/ci.yml/badge.svg)
 
-An always-on extension for **Stable Diffusion WebUI Forge Neo** that resolves inline prompt choices in a deterministic order instead of randomly.
+Deterministic prompt sequencing for **Stable Diffusion WebUI Forge Neo**, with optional per-choice output folders and first-class coexistence with **Dynamic Prompts**.
 
-Current release: **v0.6.0**.
+Current release: **v0.6.1**
 
-## Syntax
+Audited against:
 
-Use double equals for normal sequential choices:
+- **Forge Neo** `Haoming02/sd-webui-forge-classic` branch `neo`, commit `d2c29a6bc6cf834c83cdefed394062c2c3e58760`
+- **sd-dynamic-prompts** extension commit `de056ff8d80e4ad120e13a90cf200f3383f427c6`
+- **dynamicprompts** parser/generator package `0.31.0`
 
-```text
-==front | side | back==
-```
+The audit details, lifecycle assumptions, fixes, and remaining validation boundary are documented in [`AUDIT.md`](AUDIT.md).
 
-Use triple equals when the selected choice should also determine the output folder:
+## What this extension does
 
-```text
-===front | side | back===
-```
-
-The old `$...$`, `$$...$$`, `=...=`, `[[...]]`, `&...&`, and `&&...&&` forms are **not syntax** and remain literal prompt text.
-
-### Example
+Dynamic Prompts is excellent when you want a random or combinatorial choice. Sequential Prompts is for the opposite case: **walk through choices in a predictable order**.
 
 ```text
-1girl, ===front | side | back===, ==day | sunset | night==
+==front view | side view | back view==
 ```
 
-With **Advance every image** and Batch size 3:
+can produce:
 
 ```text
-image 1: 1girl, front, day     -> front/
-image 2: 1girl, side, sunset   -> side/
-image 3: 1girl, back, night    -> back/
+front view -> side view -> back view -> front view -> ...
 ```
 
-Multiple folder markers combine with `__`:
+Use triple equals when the selected value should also become an output-folder identity:
+
+```text
+===front view | side view | back view===
+```
+
+which can route final images to:
+
+```text
+front view/
+side view/
+back view/
+```
+
+## Quick start
+
+### Normal sequencing
+
+```text
+1girl, ==front view | side view | back view==, white background
+```
+
+### Sequencing + output folders
+
+```text
+1girl, ===front view | side view | back view===, white background
+```
+
+### Dynamic Prompts + Sequential Prompts together
+
+```text
+1girl, {red|blue} hair, __background__, ==front view|side view|back view==
+```
+
+Dynamic Prompts expands `{...}` and `__...__`; Sequential Prompts then advances `==...==` deterministically.
+
+## Syntax reference
+
+| Syntax | Meaning |
+|---|---|
+| `==A | B | C==` | Ordered Sequential choice |
+| `===A | B | C===` | Ordered choice + selected value contributes to output folder |
+| `===A===` | Single fixed folder marker |
+| `\|` | Literal `|` inside a Sequential block |
+| `\=` | Literal `=` inside a Sequential block |
+| `\\` | Literal backslash inside a Sequential block |
+
+Old forms are intentionally **not parsed**:
+
+```text
+$A|B$
+$$A|B$$
+=A|B=
+[[A|B]]
+&A|B&
+&&A|B&&
+```
+
+They remain literal prompt text. This is deliberate: compatibility aliases would reintroduce collisions and false positives that v0.6.x is designed to remove.
+
+## Why `==` / `===`
+
+v0.5.x used `$...$` and `$$...$$`. That collided conceptually and practically with Dynamic Prompts, which uses dollar syntax in its own grammar:
+
+```text
+${season=!{summer|winter}}
+{2$$red|green|blue}
+%{wrapper ...$$inner}
+```
+
+v0.6.x therefore reserves only:
+
+```text
+==...==
+===...===
+```
+
+Dynamic Prompts keeps its default grammar:
+
+```text
+{A|B}          variants
+__name__       wildcards
+${name=...}    variables
+%{...$$...}    wrap command
+```
+
+Forge keeps its own grammar, including:
+
+```text
+(prompt:1.2)
+[before:after:0.5]
+[red|blue]
+<lora:name:1>
+```
+
+The Sequential parser treats Dynamic Prompts brace blocks, Forge Extra Network tags, and Forge bracket/group constructs as protected structures rather than stealing their internal `|` characters.
+
+## Sequence grouping
+
+### One choice per batch — default and recommended
+
+With Batch size 3:
+
+```text
+==A|B|C==
+```
+
+produces:
+
+```text
+batch 1 -> A A A
+batch 2 -> B B B
+batch 3 -> C C C
+```
+
+This mode is especially important when choices alter LoRA / Extra Network configuration because Forge activates those networks per batch.
+
+### Advance every image
+
+With Batch size 3:
+
+```text
+==A|B|C==
+```
+
+produces:
+
+```text
+batch 1 -> A B C
+batch 2 -> A B C
+```
+
+Use this only when you actually want different choices within one batch.
+
+## Repeat, start, and end behavior
+
+The extension exposes four sequence controls:
+
+- **Sequence grouping** — advance per batch or per image.
+- **Hold each choice for N images / batches** — repeat a value for N sequence units.
+- **Start index** — start from a later choice; `0` is the first value.
+- **After the last choice** — **Loop** wraps to the first choice; **Clamp** stays on the final choice.
+
+All Sequential blocks in one image use the same global sequence index, even if the blocks have different numbers of choices.
+
+## Multiple blocks and folders
+
+```text
+===A|B|C===, ==D|E|F==
+```
+
+resolves together:
+
+```text
+A, D -> A/
+B, E -> B/
+C, F -> C/
+```
+
+Multiple folder blocks are joined with `__`:
 
 ```text
 ===A|B|C===, ===D|E|F===
 ```
 
-produces folders such as:
+becomes:
 
 ```text
 A__D/
@@ -50,182 +201,157 @@ B__E/
 C__F/
 ```
 
-## Why v0.6.0 changed the delimiters
+Adjacent blocks are also supported, but ordinary comma/space-separated prompt tokens are easier to read and are recommended.
 
-v0.5.x used `$...$` / `$$...$$`. That was a poor coexistence choice for Dynamic Prompts because Dynamic Prompts itself uses dollar-prefixed grammar such as `${variable}` and `$$` inside multi-selection syntax.
+## Escaping
 
-v0.6.0 therefore moves Sequential Prompts to `==...==` / `===...===`. Dynamic Prompts' default grammar is kept separate:
-
-```text
-{red|blue}                 # Dynamic Prompts variant
-__hair_color__             # Dynamic Prompts wildcard
-${season=!{summer|winter}} # Dynamic Prompts variable
-%{wrapper$$inner}          # Dynamic Prompts wrap command
-==front|back==             # Sequential Prompts
-===front|back===           # Sequential Prompts + folder routing
-```
-
-The CI suite installs the real `dynamicprompts` package and verifies that its default variant, multi-select-dollar, variable, and Sequential/Folder syntax coexist in the same prompt.
-
-If a user manually changes Dynamic Prompts' configurable variant or wildcard delimiters so they overlap `==` or `===`, generation is stopped with a clear conflict instead of depending on callback order.
-
-## Sequence modes
-
-### One choice per batch (default / recommended)
-
-Every image in a Forge batch uses the same choice, then the next batch advances to the next choice.
+Escapes are defined **inside a matched Sequential block**:
 
 ```text
-==A|B|C==
+==A\|B | C\=D | E\\F==
 ```
+
+contains these three choices:
 
 ```text
-batch 1: A, A, A
-batch 2: B, B, B
-batch 3: C, C, C
+A|B
+C=D
+E\F
 ```
 
-If **Hold each choice for N images / batches = 3**, each choice is held for three batches before advancing.
+Backslashes outside Sequential blocks are preserved. Windows-style paths therefore remain untouched when no Sequential block consumes them.
 
-### Advance every image
+## Parser safety rules
 
-Use this if you explicitly want mixed choices inside the same batch.
+The parser intentionally fails closed on ambiguous input.
 
-```text
-==A|B|C==
-```
+- A normal `==...==` block requires at least one unescaped top-level `|`.
+- A folder `===...===` block may contain one value.
+- Nested Sequential blocks are unsupported.
+- Malformed or overlong delimiter runs such as `====...====` are not partially interpreted.
+- Attached comparison-like text such as `artist==foo|bar==weight` is left literal.
+- Extra Network tags such as `<lora:name:1>` are atomic.
+- Pipes inside Forge `[...]`, Dynamic Prompts `{...}`, and protected groups do not split Sequential choices.
+- Randomized fuzz/regression tests verify that arbitrary prompt text is parsed deterministically and without crashes.
 
-Batch size 1, Batch count 3:
+## Dynamic Prompts compatibility
 
-```text
-A -> B -> C
-```
+Dynamic Prompts and Sequential Prompts are intended to run **at the same time**.
 
-Batch size 3, Batch count 1:
+The normal Forge lifecycle is:
 
-```text
-A, B, C
-```
+1. Dynamic Prompts expands its templates during its `process()` callback.
+2. Forge calls `p.init(...)` after all always-on `process()` callbacks.
+3. Sequential Prompts inspects the resulting final prompt arrays after `p.init(...)`.
+4. Sequential Prompts resolves the current batch in `before_process_batch()`.
+5. A one-shot core guard validates the final state immediately before Forge parses Extra Networks.
 
-### Repeat, start, and end behavior
+This means a Dynamic Prompts wildcard may itself produce a valid `==...==` block and Sequential Prompts can consume that final result.
 
-- **Hold each choice for N images / batches** — holds a choice for N sequence units.
-- **Start index** — starts from a later choice.
-- **Loop** — wraps after the final choice.
-- **Clamp** — stays on the final choice.
-- **Also process negative prompt** — resolves Sequential syntax in the negative prompt too.
+Automated compatibility tests use the real `dynamicprompts==0.31.0` package and cover:
 
-## Escapes and prompt-language coexistence
+- `{A|B}` variants
+- `{2$$A|B|C}` multi-selection
+- `${variable}` assignments/access
+- `%{...$$...}` wrap commands
+- actual wildcard files through `WildcardManager`
+- normal Sequential blocks
+- folder-routing Sequential blocks
+- both processing orders at the parser level
 
-Inside a Sequential block:
+If Dynamic Prompts is manually configured to use a variant/wildcard delimiter that overlaps `==` / `===`, relevant raw Sequential jobs are rejected instead of relying on callback order.
 
-```text
-\|   literal pipe
-\=   literal equals
-\\   literal backslash
-```
+## Negative prompts
 
-Unrelated backslashes are preserved, including Windows-style paths.
+**Also process negative prompt** is enabled by default.
 
-The parser deliberately avoids stealing syntax owned by Forge or Dynamic Prompts:
+When enabled, positive and negative prompt arrays share the same image identity and sequence index. When disabled, Sequential-looking text in the negative prompt remains untouched.
 
-- Forge Extra Network tags such as `<lora:name:1>` are treated atomically.
-- Forge bracket syntax such as `[red|blue]` does not become a Sequential separator.
-- Forge grouping/emphasis can contain a Sequential block, e.g. `(==A|B==)`.
-- Dynamic Prompts brace blocks such as `{red|blue}`, `${...}`, and other balanced `{...}` constructs remain opaque until Dynamic Prompts expands them.
-- Plain `$` / `$$` are never interpreted by Sequential Prompts.
-
-Nested Sequential blocks are intentionally unsupported and fail closed as literal text rather than being partially transformed.
-
-Empty choices are supported:
-
-```text
-==with hat||without hat==
-```
-
-A folder marker may contain a single value:
-
-```text
-===portrait===
-```
-
-## Dynamic Prompts
-
-Dynamic Prompts and Sequential Prompts are intended to be enabled at the same time.
-
-A normal combined prompt looks like this:
-
-```text
-1girl, {red|blue} hair, __background__, ==front view|side view|back view==
-```
-
-Dynamic Prompts expands its own syntax during `process()`. Sequential Prompts activates from the final prompt arrays after all `process()` callbacks, then resolves `==...==` / `===...===` in `before_process_batch()`.
-
-This also allows a Dynamic Prompts wildcard or other expansion to introduce Sequential syntax into the final prompt, provided the resulting text contains a valid top-level Sequential block.
-
-### Important limitation: Prompt Matrix
-
-Forge's selectable **Prompt Matrix** script consumes the raw prompt's `|` separators before the normal processing lifecycle. That conflict is structural and is unrelated to the choice of `==` delimiters, so Prompt Matrix remains intentionally rejected when raw Sequential syntax is present.
+Folder names are derived only from folder markers in the **main positive prompt**.
 
 ## LoRA / Extra Networks
 
-Choices may contain Forge Extra Network tags:
+LoRA choices are supported:
 
 ```text
-==<lora:a:1> | <lora:b:1>==
+==<lora:character_a:1> | <lora:character_b:1>==
 ```
 
-Forge Neo applies Extra Network configuration per batch, not independently per image. Therefore the extension rejects a Sequential configuration that would create different active LoRA/Extra Network settings inside the same batch.
+However, Forge activates Extra Networks for a batch. If Sequential Prompts would create different LoRA / Extra Network configurations inside the same batch, the job is rejected before sampling.
 
-Safe examples include:
+Safe patterns include:
 
-- Batch size 1.
-- One choice per batch mode where every image in the current batch resolves to the same Extra Network setup.
+```text
+Batch size = 1
+```
 
-Existing heterogeneous Extra Network prompts unrelated to Sequential Prompts are not newly policed by this extension.
+or the default **one choice per batch** mode.
+
+The guard only rejects unsafe differences created by Sequential resolution; it does not invent new policy for unrelated prompts supplied by other extensions.
 
 ## Hires.fix
 
-When Hires.fix is enabled, the corresponding Hires prompt arrays use the same frozen image identity and sequence position as the normal prompt.
+Hires.fix positive and negative prompt arrays are included in the same frozen image-layout contract.
 
-Folder routing is controlled only by the **main positive prompt**. `===...===` in negative or Hires-only prompt text does not create a folder.
+- The same sequence index is used for the base and corresponding Hires prompt.
+- Custom Hires prompts may contain `==...==` / `===...===`.
+- Hires-only folder markers do **not** determine the folder; folder identity comes from the main positive prompt.
+- Forge Neo's current Hires output-root behavior is respected, including `outdir_hires_samples` when configured.
+- First-pass Hires intermediate saves are not routed as final Sequential samples.
 
-If **Save images before highres fix** is enabled, those intermediate first-pass images stay in Forge's normal output location. Only final core samples and their directly-associated auxiliary saves are routed.
+## Output-folder routing
 
-## Output folders
+Folder routing is intentionally conservative.
 
-`===...===` folders are sanitized for portable filesystem use:
+A destination component is:
 
-- Windows-invalid filename characters are replaced.
-- Windows reserved device names are handled.
-- Unicode is normalized.
-- dangerous control/bidi characters are removed or replaced.
-- long UTF-8 names are deterministically shortened.
-- lossy sanitization receives a short deterministic hash so different raw choices do not silently collapse into the same directory across runs.
-- path containment is checked before and after directory creation.
+- Unicode-normalized;
+- stripped of control and dangerous bidi characters;
+- sanitized for Windows-invalid filename characters;
+- protected against `.` / `..` and Windows device names such as `CON`, `NUL`, `COM1`, and `LPT1`;
+- byte/character bounded;
+- deterministically hashed when sanitization is lossy so distinct unsafe names do not silently collapse together.
 
-Forge's existing **save-to-dirs** behavior is preserved: the Sequential choice folder is nested under the subdirectory Forge already selected.
+The destination path is containment-checked before use.
 
-### Save numbering
+If Forge's own **save to dirs** option is enabled, the Sequential folder is nested under the directory Forge already selected.
 
-Forge computes its numeric filename before `before_image_saved`. The extension recomputes the numeric prefix inside the actual destination folder while preserving Forge's final Override / Number Suffix collision policy.
+## Save numbering and post-processing identity
 
-## Post-processing identity
+Forge creates a candidate filename before the `before_image_saved` callback. Sequential Prompts redirects that filename into the selected folder and recomputes the numeric prefix against the destination directory, while preserving Forge's final collision policy.
 
-Forge allows `postprocess_batch_list` extensions to reorder, remove, or add images if they also update prompt/seed metadata. Folder routing follows that live metadata identity instead of trusting the original slot number.
+Folder routing follows the live prompt/negative/seed/subseed identity. If another extension legitimately reorders images and metadata together, routing follows that identity rather than blindly trusting the original slot. If the identity becomes ambiguous, routing is skipped rather than guessed.
 
-If identity is genuinely ambiguous, routing is skipped rather than guessed.
+Grids, video output, manual/non-core saves, and Hires first-pass intermediates are deliberately excluded from normal choice-folder routing.
 
-## Forge scripts and special modes
+## Fail-closed lifecycle behavior
 
-Sequence state begins again for each independent `process_images()` invocation. This matters for scripts such as X/Y/Z Plot, Prompts from File, Loopback, and img2img Batch, which create sub-runs or reuse the processing object.
+Forge catches exceptions thrown by always-on script callbacks. That means throwing from `before_process_batch()` alone is **not enough** to guarantee a broken batch stops.
 
-Two Forge selectable scripts are intentionally treated specially when Sequential syntax is relevant:
+v0.6.1 therefore uses a two-stage safety design:
 
-- **Prompt Matrix**: rejects raw Sequential syntax because it consumes `|` before the normal lifecycle.
-- **SD Upscale**: rejects Sequential syntax because it recursively generates tiles and saves the final composite outside the normal core sample-save identity.
+1. batch-resolution failures are recorded without emptying the live prompt list;
+2. a one-shot wrapper around Forge's core `parse_extra_network_prompts()` raises the recorded error outside the always-on callback catcher.
 
-Multi-frame **Wan/video** jobs are also rejected when Sequential syntax is active because Forge's batch axis represents video frames rather than independent image identities. Single-frame Wan remains allowed.
+This avoids the older failure mode where setting `p.prompts = []` caused Forge to silently break out of its generation loop before the explicit safety exception could run.
+
+The guard also snapshots the resolved prompt state. Unchanged output produced by Sequential Prompts is trusted, while a later extension that changes the protected prompt state and reintroduces `==...==` / `===...===` is stopped before Extra Network parsing.
+
+Invalid API/script settings are normalized only for inspection; if a real Sequential block is active, invalid grouping/repeat/start/end/negative settings cause an explicit pre-sampling failure instead of falling through with raw syntax.
+
+## Special Forge modes
+
+### Prompt Matrix — intentionally incompatible for raw Sequential syntax
+
+Forge's selectable **Prompt Matrix** script splits its selected raw prompt on `|` before the normal processing lifecycle. Because `|` is also the choice separator inside Sequential blocks, this is a structural conflict. Relevant raw Sequential jobs are rejected.
+
+### SD Upscale — intentionally rejected when Sequential is relevant
+
+SD Upscale recursively processes tiles and produces its composite outside the normal core sample identity used by folder routing. Sequential jobs are rejected rather than pretending that identity is reliable.
+
+### Wan / video
+
+Multi-frame Wan/video jobs are rejected when Sequential syntax is active because the batch axis represents frames rather than independent image identities. Single-frame Wan remains allowed.
 
 ## Installation
 
@@ -235,19 +361,72 @@ From the Forge Neo root directory:
 git clone https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo.git extensions/sd-webui-sequential-prompts-forge-neo
 ```
 
-Then restart Forge Neo and expand the **Sequential Prompts** accordion in txt2img or img2img. The extension is enabled by default; prompts without `==...==` or `===...===` remain a behavioral no-op.
+Restart Forge Neo, then open the **Sequential Prompts** accordion in txt2img or img2img.
 
-To update an existing clone:
+The extension is enabled by default, but a prompt with no valid `==...==` / `===...===` syntax is a behavioral no-op.
+
+### Update
 
 ```bash
 cd extensions/sd-webui-sequential-prompts-forge-neo
 git pull
 ```
 
-Restart Forge Neo after updating.
+Restart Forge Neo after updating Python extension code.
 
-## Compatibility and testing
+## Migrating from v0.5.x
 
-GitHub Actions runs on **Ubuntu and Windows with Python 3.13**.
+Replace:
 
-The suite covers sequencing, batching, Hires.fix, LoRA/Extra Networks, real Dynamic Prompts parser/generator coexistence, save routing, numbering, Unicode/path handling, and special-mode guards.
+```text
+$A|B|C$
+```
+
+with:
+
+```text
+==A|B|C==
+```
+
+and replace:
+
+```text
+$$A|B|C$$
+```
+
+with:
+
+```text
+===A|B|C===
+```
+
+There is no automatic compatibility parser for the old dollar syntax because that would recreate the Dynamic Prompts conflict.
+
+## Automated verification
+
+CI runs the full suite on:
+
+- Ubuntu latest / Windows latest
+- Python 3.10 / 3.11 / 3.13
+- pinned `dynamicprompts==0.31.0`
+
+CI also checks out the audited upstream Forge Neo and sd-dynamic-prompts commits and verifies the lifecycle contracts this extension depends on: callback exception handling, process/init/batch order, Extra Network parsing order, Hires prompt arrays/output root, save callback order, save identity, and Prompt Matrix behavior.
+
+The suite covers parser edge cases and randomized input, Dynamic Prompts integration, batch/partial-batch identity, Hires.fix, negative prompts, LoRA safety, shallow-copy/reuse behavior, output routing, Unicode/Windows/path safety, numbering, special-mode rejection, and explicit fail-closed errors.
+
+See [`AUDIT.md`](AUDIT.md) for what is proven automatically and what still requires a real Forge UI/GPU smoke run.
+
+## Development
+
+Local core tests:
+
+```bash
+python -m compileall -q seqprompt scripts tests
+python -m unittest discover -s tests -v
+```
+
+Upstream contract tests are skipped locally unless `FORGE_NEO_CONTRACT_ROOT` and `DYNAMIC_PROMPTS_EXTENSION_ROOT` point at the audited source trees. GitHub Actions configures both automatically.
+
+## Release history
+
+See [`CHANGELOG.md`](CHANGELOG.md).
