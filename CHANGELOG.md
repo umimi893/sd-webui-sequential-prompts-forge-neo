@@ -36,6 +36,7 @@ All notable public changes are recorded here. The current compatibility audit is
 
 - Expanded CI from two Python 3.13 jobs to Ubuntu/Windows across Python 3.10, 3.11, and 3.13.
 - Pinned `dynamicprompts==0.31.0` for reproducible compatibility testing.
+- Updated GitHub Actions to the current Node 24-based checkout/setup-python v7 releases, pinned by commit SHA; restricted workflow permissions to read-only contents and added a per-job timeout.
 - Rewrote README around the v0.6.1 syntax, lifecycle guarantees, Dynamic Prompts coexistence, LoRA/Hires behavior, folder routing, migration, and troubleshooting boundaries.
 - Added a full [`AUDIT.md`](AUDIT.md) describing verified upstream assumptions, fixes, automated coverage, and the remaining real-GPU/UI smoke-test boundary.
 
