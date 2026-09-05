@@ -171,14 +171,14 @@ def _find_closing_equals(text: str, start: int, delimiter: str) -> int:
             if _valid_adjacent_close_run(delimiter, run):
                 return cursor
 
-            nested = _delimiter_at(text, cursor)
-            if nested is not None and _can_start_block(text, cursor):
+            # Any other unescaped multi-equals run inside a candidate block is
+            # structurally ambiguous. Fail the entire candidate closed instead of
+            # treating a malformed delimiter run as ordinary choice text or
+            # reinterpreting a suffix of it as a delimiter.
+            if run >= len(_NORMAL_DELIMITER):
                 return -2
 
-            # Treat one physical run as one token. Without this skip, a malformed
-            # run such as six '=' characters could be reinterpreted from its second
-            # character as a valid five-character close+open run.
-            cursor += max(run, 1)
+            cursor += 1
             continue
 
         cursor += 1
