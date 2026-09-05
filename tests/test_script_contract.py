@@ -217,6 +217,35 @@ class ScriptContractTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "unresolved Sequential"):
             p.parse_extra_network_prompts()
 
+    def test_batch_invariant_failure_raises_in_core_instead_of_silent_break(self):
+        module, _, _, _ = self.load_script_module()
+        p = self.make_p(prompt="==A|B==", total=1, batch_size=1)
+        script = self.activate(module, p)
+        self.slice_batch(p)
+        p.seeds = []
+        script.before_process_batch(p, True, "image", 1, 0, "loop", True, batch_number=0)
+        self.assertNotEqual(p.prompts, [])
+        with self.assertRaisesRegex(Exception, "batch resolution failed"):
+            p.parse_extra_network_prompts()
+
+    def test_invalid_settings_fail_closed_when_sequence_is_active(self):
+        module, _, _, _ = self.load_script_module()
+        p = self.make_p(prompt="==A|B==", total=1, batch_size=1)
+        script = module.Script()
+        script.setup(p)
+        script.process(p, True, "bogus", "not-an-int", -1, "bogus", "not-a-bool")
+        with self.assertRaisesRegex(Exception, "Invalid Sequential Prompts settings"):
+            p.init(p.all_prompts, p.all_seeds, p.all_subseeds)
+
+    def test_invalid_settings_remain_noop_when_no_sequence_exists(self):
+        module, _, _, _ = self.load_script_module()
+        p = self.make_p(prompt="plain", total=1, batch_size=1)
+        script = module.Script()
+        script.setup(p)
+        script.process(p, True, "bogus", "not-an-int", -1, "bogus", "not-a-bool")
+        p.init(p.all_prompts, p.all_seeds, p.all_subseeds)
+        self.assertIsNone(p._seqprompt_active_run)
+
     def test_multiframe_wan_is_rejected_after_final_init_state(self):
         module, _, _, _ = self.load_script_module(wan=True, model_is_wan=True)
         p = self.make_p(prompt="==A|B==", total=5, batch_size=5)

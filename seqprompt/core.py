@@ -142,6 +142,14 @@ def _delimiter_at(text: str, index: int) -> tuple[str, bool] | None:
     return None
 
 
+def _valid_adjacent_close_run(delimiter: str, run: int) -> bool:
+    """A close may be followed immediately by exactly one valid next opener."""
+    return run in {
+        len(delimiter) + len(_NORMAL_DELIMITER),
+        len(delimiter) + len(_FOLDER_DELIMITER),
+    }
+
+
 def _find_closing_equals(text: str, start: int, delimiter: str) -> int:
     cursor = start
     while cursor < len(text):
@@ -158,14 +166,20 @@ def _find_closing_equals(text: str, start: int, delimiter: str) -> int:
             end = cursor + len(delimiter)
             if run == len(delimiter) and _can_end_block(text, end):
                 return cursor
-            # Adjacent blocks share one uninterrupted equals run, e.g.
-            # ==A|B====C|D== (close == followed immediately by open ==).
-            if run >= len(delimiter) + len(_NORMAL_DELIMITER):
+            # Adjacent blocks share one uninterrupted equals run. Accept only
+            # close+normal-open or close+folder-open exactly.
+            if _valid_adjacent_close_run(delimiter, run):
                 return cursor
 
-        nested = _delimiter_at(text, cursor)
-        if nested is not None and _can_start_block(text, cursor):
-            return -2
+            # Any other unescaped multi-equals run inside a candidate block is
+            # structurally ambiguous. Fail the entire candidate closed instead of
+            # treating a malformed delimiter run as ordinary choice text or
+            # reinterpreting a suffix of it as a delimiter.
+            if run >= len(_NORMAL_DELIMITER):
+                return -2
+
+            cursor += 1
+            continue
 
         cursor += 1
     return -1
@@ -271,12 +285,8 @@ def resolve_sequential_blocks(
                 adjacent_after_resolved_block = False
                 continue
 
-        if text[index] == "\\" and index + 1 < len(text) and text[index + 1] == "=":
-            output.append("=")
-            index += 2
-            adjacent_after_resolved_block = False
-            continue
-
+        # Backslash escaping is decoded only inside a matched Sequential block
+        # by split_choices(). Outside a block, preserve the user's text exactly.
         output.append(text[index])
         index += 1
         adjacent_after_resolved_block = False

@@ -4,7 +4,12 @@ import unittest
 from types import SimpleNamespace
 
 from seqprompt.batch_integration import BatchIntegrationError, SequenceConfig
-from seqprompt.integration import prepare_after_init, preparse_is_clean, resolve_current_batch
+from seqprompt.integration import (
+    install_preparse_sentinel,
+    prepare_after_init,
+    preparse_is_clean,
+    resolve_current_batch,
+)
 
 KNOWN = {"lora": "lora", "lyco": "lora"}
 
@@ -28,6 +33,7 @@ def make_p(*, total=3, batch_size=3, prompt="==A|B|C==", negative="neg", enable_
         disable_extra_networks=False,
         main_prompt=all_prompts[0],
         main_negative_prompt=all_negatives[0],
+        parse_extra_network_prompts=lambda: "parsed",
     )
 
 
@@ -130,8 +136,23 @@ class ContractFlowTests(unittest.TestCase):
         p = make_p(total=1, batch_size=1)
         run = self.prepare(p)
         self.resolve(p, run, 0)
+        install_preparse_sentinel(p, batch_number=0, run=run)
         p.prompts[0] = "==late1|late2=="
+        with self.assertRaisesRegex(Exception, "unresolved Sequential"):
+            p.parse_extra_network_prompts()
+
+    def test_resolved_choice_that_looks_like_sequence_is_not_false_positive(self):
+        # The second choice intentionally decodes escaped delimiters/pipes into
+        # literal text that resembles a fresh Sequential block.
+        raw = "==plain|\\=\\=literal\\|text\\=\\==="
+        config = SequenceConfig(start_index=1)
+        p = make_p(total=1, batch_size=1, prompt=raw)
+        run = self.prepare(p, config)
+        self.resolve(p, run, 0, config)
+        self.assertEqual(p.prompts, ["==literal|text=="])
         self.assertFalse(self.clean(p, run, 0))
+        install_preparse_sentinel(p, batch_number=0, run=run)
+        self.assertEqual(p.parse_extra_network_prompts(), "parsed")
 
     def test_negative_toggle_off_keeps_negative_literal_through_full_flow(self):
         config = SequenceConfig(apply_negative=False)

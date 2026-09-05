@@ -1,4 +1,6 @@
+import random
 import unittest
+
 from seqprompt.core import resolve_sequential_blocks, sequence_index_for_image, split_choices
 
 
@@ -50,6 +52,13 @@ class CoreTests(unittest.TestCase):
             [r"C:\models\x", r"D:\images\y"],
         )
 
+    def test_escape_outside_block_is_preserved_exactly(self):
+        for text in (r"\==A|B==", r"\===A|B===", r"prefix \==A|B== suffix"):
+            with self.subTest(text=text):
+                r = resolve_sequential_blocks(text, 1)
+                self.assertEqual(r.text, text)
+                self.assertEqual(r.matched_blocks, 0)
+
     def test_extra_network_is_atomic(self):
         self.assertEqual(
             resolve_sequential_blocks("==<lora:x:a|b=1>|plain==", 0).text,
@@ -85,12 +94,31 @@ class CoreTests(unittest.TestCase):
         text = "{2$$red|green|blue}, ==front|back=="
         self.assertEqual(resolve_sequential_blocks(text, 1).text, "{2$$red|green|blue}, back")
 
-    def test_adjacent_blocks(self):
+    def test_dynamic_prompts_wrap_is_opaque(self):
+        text = "%{cinematic $$ {red|blue} subject}, ==front|back=="
+        self.assertEqual(
+            resolve_sequential_blocks(text, 1).text,
+            "%{cinematic $$ {red|blue} subject}, back",
+        )
+
+    def test_adjacent_normal_blocks(self):
         self.assertEqual(resolve_sequential_blocks("==A|B====C|D==", 1).text, "BD")
 
     def test_adjacent_folder_blocks(self):
         r = resolve_sequential_blocks("===A|B======C|D===", 1)
         self.assertEqual((r.text, r.folder_choices), ("BD", ("B", "D")))
+
+    def test_mixed_adjacent_blocks(self):
+        normal_then_folder = resolve_sequential_blocks("==A|B=====C|D===", 1)
+        self.assertEqual(
+            (normal_then_folder.text, normal_then_folder.folder_choices),
+            ("BD", ("D",)),
+        )
+        folder_then_normal = resolve_sequential_blocks("===A|B=====C|D==", 1)
+        self.assertEqual(
+            (folder_then_normal.text, folder_then_normal.folder_choices),
+            ("BD", ("B",)),
+        )
 
     def test_malformed_nested_fails_literal(self):
         text = "==outer ==A|B==|tail=="
@@ -100,19 +128,45 @@ class CoreTests(unittest.TestCase):
         text = "===outer ===A=== tail==="
         self.assertEqual(resolve_sequential_blocks(text, 0).text, text)
 
-    def test_four_equals_are_not_a_block(self):
-        text = "====A|B===="
-        self.assertEqual(resolve_sequential_blocks(text, 1).text, text)
+    def test_malformed_equals_runs_fail_closed(self):
+        samples = (
+            "====A|B====",
+            "==A|B======C|D==",
+            "===A|B=======C|D===",
+            "========A|B========",
+        )
+        for text in samples:
+            with self.subTest(text=text):
+                r = resolve_sequential_blocks(text, 1)
+                self.assertEqual(r.text, text)
+                self.assertEqual(r.matched_blocks, 0)
 
     def test_attached_comparison_like_text_is_literal(self):
-        text = "artist==foo|bar==weight"
-        self.assertEqual(resolve_sequential_blocks(text, 1).text, text)
+        for text in (
+            "artist==foo|bar==weight",
+            "x==left|right==y",
+            "name_==left|right==suffix",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(resolve_sequential_blocks(text, 1).text, text)
 
     def test_empty_choice(self):
         self.assertEqual(resolve_sequential_blocks("==A||C==", 1).text, "")
 
     def test_clamp(self):
         self.assertEqual(resolve_sequential_blocks("==A|B|C==", 99, "clamp").text, "C")
+
+    def test_parser_is_total_and_deterministic_for_random_text(self):
+        rng = random.Random(893)
+        alphabet = "abcXYZ012 =|\\[]{}()<>:$%_,-"
+        for _ in range(1000):
+            text = "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 120)))
+            sequence_index = rng.randrange(0, 20)
+            first = resolve_sequential_blocks(text, sequence_index)
+            second = resolve_sequential_blocks(text, sequence_index)
+            self.assertEqual(first, second)
+            self.assertIsInstance(first.text, str)
+            self.assertGreaterEqual(first.matched_blocks, 0)
 
     def test_per_image_indices(self):
         self.assertEqual(
