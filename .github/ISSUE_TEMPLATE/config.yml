@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Real-machine smoke-test protocol
+    url: https://github.com/umimi893/sd-webui-sequential-prompts-forge-neo/blob/main/SMOKE_TEST.md
+    about: Run the release smoke-test protocol before opening a bug report when possible.
