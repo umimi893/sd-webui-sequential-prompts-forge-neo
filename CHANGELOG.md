@@ -1,6 +1,6 @@
 # Changelog
 
-All notable public changes are recorded here. The current compatibility audit is in [`AUDIT.md`](AUDIT.md).
+All notable public changes are recorded here. The current compatibility audit is in [`AUDIT.md`](AUDIT.md), the real-machine validation protocol is in [`SMOKE_TEST.md`](SMOKE_TEST.md), and the final publication gate is in [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md).
 
 ## v0.6.1 — lifecycle and compatibility hardening
 
@@ -32,13 +32,18 @@ All notable public changes are recorded here. The current compatibility audit is
 - Added CI contract tests for process/init/batch/Extra Network order, Forge's callback exception catcher, Hires prompt arrays and Hires output root, save callback order, batch-index save identity, and Prompt Matrix raw-pipe behavior.
 - Added a pinned sd-dynamic-prompts extension contract at `de056ff8d80e4ad120e13a90cf200f3383f427c6`.
 
-### CI and documentation
+### CI, release validation, and documentation
 
 - Expanded CI from two Python 3.13 jobs to Ubuntu/Windows across Python 3.10, 3.11, and 3.13.
 - Pinned `dynamicprompts==0.31.0` for reproducible compatibility testing.
 - Updated GitHub Actions to the current Node 24-based checkout/setup-python v7 releases, pinned by commit SHA; restricted workflow permissions to read-only contents and added a per-job timeout.
 - Rewrote README around the v0.6.1 syntax, lifecycle guarantees, Dynamic Prompts coexistence, LoRA/Hires behavior, folder routing, migration, and troubleshooting boundaries.
-- Added a full [`AUDIT.md`](AUDIT.md) describing verified upstream assumptions, fixes, automated coverage, and the remaining real-GPU/UI smoke-test boundary.
+- Added a full [`AUDIT.md`](AUDIT.md) describing verified upstream assumptions, fixes, automated coverage, and the remaining real-GPU/UI validation boundary.
+- Added [`SMOKE_TEST.md`](SMOKE_TEST.md), a 17-section real Forge Neo smoke-test protocol for startup/UI, txt2img/img2img, batch modes, Dynamic Prompts, Hires.fix, folder routing, Windows paths, save formats, LoRA safety, and explicit unsupported-mode failures.
+- Added `tools/collect_diagnostics.py`, a privacy-conscious diagnostics collector for platform/Python/version/Git state. It intentionally does not read prompts, images, API keys, environment variables, or Forge configuration values.
+- Added a structured GitHub Bug report form and disabled unstructured blank issues so failures arrive with a minimal reproduction and diagnostics.
+- CI now compiles the diagnostics tool and runs its self-test on all six OS/Python matrix jobs.
+- Added [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and [`RELEASE_NOTES_v0.6.1.md`](RELEASE_NOTES_v0.6.1.md) so the automated gate, real-machine gate, tag/release publication step, and release notes are explicit and reproducible.
 
 ## v0.6.0 — Dynamic Prompts-compatible syntax
 
