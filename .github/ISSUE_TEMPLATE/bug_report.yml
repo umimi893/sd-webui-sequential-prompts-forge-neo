@@ -1,0 +1,143 @@
+name: Bug report
+
+description: Report a reproducible Sequential Prompts problem on Forge Neo.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please reproduce it on the current release first.
+
+        Before changing settings after a failure, run:
+
+        `python tools/collect_diagnostics.py --output sequential-prompts-diagnostics.json`
+
+        The collector does not read prompts, images, API keys, environment variables, or Forge configuration values.
+
+  - type: input
+    id: version
+    attributes:
+      label: Sequential Prompts version
+      placeholder: "0.6.1"
+    validations:
+      required: true
+
+  - type: input
+    id: forge_commit
+    attributes:
+      label: Forge Neo commit
+      description: Prefer the full Git commit SHA from the diagnostics JSON.
+      placeholder: "d2c29a6bc6cf834c83cdefed394062c2c3e58760"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.10.x / 3.11.x / 3.13.x"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 / Linux distribution"
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      placeholder: "RTX 5090"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Forge surface
+      options:
+        - txt2img
+        - img2img
+        - Hires.fix
+        - output-folder routing
+        - startup / UI
+        - API
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dynamic_prompts
+    attributes:
+      label: Dynamic Prompts status
+      options:
+        - Not installed
+        - Installed but disabled
+        - Enabled
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest prompt/settings needed to reproduce. Remove private content first.
+      placeholder: |
+        Prompt: 1girl, ==front view|side view|back view==
+        Batch size: 3
+        Batch count: 2
+        Sequence grouping: advance every image
+        Steps to reproduce:
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the complete Sequential-related error or traceback if one exists.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Drag `sequential-prompts-diagnostics.json` here or paste its JSON. Review it before posting.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional extension context
+      description: List other prompt-processing or save-routing extensions that may be relevant.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verification
+      options:
+        - label: I restarted Forge after updating the extension.
+          required: true
+        - label: I checked that the prompt is not using the retired `$...$` / `$$...$$` Sequential syntax.
+          required: true
+        - label: I understand Prompt Matrix, relevant SD Upscale jobs, and multi-frame Wan/video are intentionally rejected when Sequential syntax is active.
+          required: true
